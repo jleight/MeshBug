@@ -25,15 +25,6 @@ func shortName(s string) string {
 	return s
 }
 
-func findNode(nodes []TopoNode, id string) *TopoNode {
-	for i := range nodes {
-		if nodes[i].ID == id {
-			return &nodes[i]
-		}
-	}
-	return nil
-}
-
 func edgeColor(rssi float64) string {
 	switch {
 	case rssi >= -70:

@@ -95,19 +95,16 @@ func (s *Server) sseLive(w http.ResponseWriter, r *http.Request) {
 }
 
 func liveRowFromPacket(row store.PacketRow, s *Server) templates.LivePacket {
-	// best-effort: fetch origin name; if it fails we render anyway
+	// Best-effort lookup of the observer's display name; render anyway if it fails.
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
 	var origin string
-	_ = s.store.Pool.QueryRow(s.bg(), `SELECT origin_name FROM observers WHERE id = $1`, row.ObserverID).Scan(&origin)
+	_ = s.store.Pool.QueryRow(ctx, `SELECT origin_name FROM observers WHERE id = $1`, row.ObserverID).Scan(&origin)
 	return templates.LivePacket{
 		TS: row.TS, ObserverID: row.ObserverID, Origin: origin, Hash: row.PacketHash,
 		Type: row.PacketType, Route: row.Route,
 		RSSI: row.RSSI, SNR: row.SNR, Score: row.Score, Source: row.SourcePrefix,
 	}
-}
-
-func (s *Server) bg() context.Context {
-	ctx, _ := context.WithTimeout(context.Background(), 1*time.Second)
-	return ctx
 }
 
 func (s *Server) sseOverview(w http.ResponseWriter, r *http.Request) {

@@ -34,7 +34,6 @@ func (s *Server) Handler() http.Handler { return s.mux }
 func (s *Server) routes(staticFS fs.FS) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Compress(5, "text/html", "text/css", "application/javascript", "image/svg+xml"))
 

@@ -32,7 +32,14 @@ func RunMigrations(databaseURL string) error {
 	if err != nil {
 		return err
 	}
-	defer m.Close()
+	defer func() {
+		if srcErr, dbErr := m.Close(); srcErr != nil || dbErr != nil {
+			// We've already either returned successfully or returned a more
+			// meaningful error; teardown failures here are best-effort.
+			_ = srcErr
+			_ = dbErr
+		}
+	}()
 	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return err
 	}
