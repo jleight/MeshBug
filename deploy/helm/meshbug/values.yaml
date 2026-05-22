@@ -1,0 +1,59 @@
+image:
+  repository: ghcr.io/jleight/meshbug
+  tag: ""           # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+
+# Single replica: the rollup workers assume one writer and partition maintenance
+# is once-per-instance. Scale by sharding observers across instances later if needed.
+replicaCount: 1
+
+postgres:
+  # The Secret you create out-of-band; key must contain the full Postgres DSN.
+  existingSecret: meshbug-postgres
+  existingSecretKey: dsn
+
+env:
+  MESHBUG_HTTP_ADDR: ":8080"
+  MESHBUG_AUTO_MIGRATE: "true"
+  MESHBUG_LOG_LEVEL: "info"
+
+# Brokers are listed here. Each entry's password (and optionally username)
+# comes from an existingSecret + key. The app composes MESHBUG_BROKERS_JSON
+# from these at startup.
+#
+# brokers:
+#   - name: home
+#     url: wss://mqtt.example.com:443
+#     topicPrefix: meshcore/
+#     existingSecret: meshbug-broker-home
+#     usernameKey: username
+#     passwordKey: password
+brokers: []
+
+ingress:
+  enabled: true
+  className: ""
+  host: meshbug.local
+  tls: false
+  annotations: {}
+
+service:
+  type: ClusterIP
+  port: 80
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+serviceAccount:
+  create: true
+  name: ""

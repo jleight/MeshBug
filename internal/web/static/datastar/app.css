@@ -1,0 +1,14 @@
+/* MeshBug-specific overrides on top of Tabler. */
+.mb-sparkline { display: inline-block; vertical-align: middle; }
+.mb-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8125rem; }
+.mb-rssi-good { background-color: rgba(34,197,94,0.20); }
+.mb-rssi-ok   { background-color: rgba(234,179,8,0.20); }
+.mb-rssi-bad  { background-color: rgba(239,68,68,0.20); }
+.mb-pill-up   { background: #2fb344; color: #fff; }
+.mb-pill-down { background: #d6336c; color: #fff; }
+.mb-live-row  { animation: mb-flash 1s ease-in-out; }
+@keyframes mb-flash {
+  from { background-color: rgba(59,130,246,0.35); }
+  to   { background-color: transparent; }
+}
+.mb-topo svg { width: 100%; height: 70vh; }

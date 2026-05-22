@@ -1,0 +1,90 @@
+package templates
+
+import (
+	"fmt"
+	"strings"
+	"time"
+)
+
+// Sparkline renders a small inline SVG sparkline of values, optionally with
+// a baseline at zero. width/height are in CSS pixels.
+templ Sparkline(values []float64, width, height int, stroke string) {
+	@sparklineSVG(values, width, height, stroke)
+}
+
+templ sparklineSVG(values []float64, width, height int, stroke string) {
+	if len(values) == 0 {
+		<svg class="mb-sparkline" width={ fmt.Sprintf("%d", width) } height={ fmt.Sprintf("%d", height) }></svg>
+	} else {
+		<svg class="mb-sparkline" width={ fmt.Sprintf("%d", width) } height={ fmt.Sprintf("%d", height) } viewBox={ fmt.Sprintf("0 0 %d %d", width, height) } preserveAspectRatio="none">
+			<polyline fill="none" stroke={ stroke } stroke-width="1.5" points={ sparklinePoints(values, width, height) }/>
+		</svg>
+	}
+}
+
+// RSSIBadge color-codes an RSSI value into one of three Tabler pill classes.
+templ RSSIBadge(rssi int) {
+	<span class={ "badge", rssiBadgeClass(rssi) }>{ fmt.Sprintf("%d dBm", rssi) }</span>
+}
+
+// StatusPill renders an up/down status pill for an observer.
+templ StatusPill(status string) {
+	if strings.EqualFold(status, "online") {
+		<span class="badge mb-pill-up">online</span>
+	} else {
+		<span class="badge mb-pill-down">offline</span>
+	}
+}
+
+templ dbmOrDash(v *int) {
+	if v != nil {
+		{ fmt.Sprintf("%d dBm", *v) }
+	} else {
+		<span class="text-secondary">—</span>
+	}
+}
+
+templ durationOrDash(v *int64) {
+	if v != nil {
+		{ humanDuration(*v) }
+	} else {
+		<span class="text-secondary">—</span>
+	}
+}
+
+templ rssiOrDash(v *int) {
+	if v != nil {
+		@RSSIBadge(*v)
+	} else {
+		<span class="text-secondary">—</span>
+	}
+}
+
+templ snrOrDash(v *float64) {
+	if v != nil {
+		{ fmt.Sprintf("%.1f", *v) }
+	} else {
+		<span class="text-secondary">—</span>
+	}
+}
+
+templ scoreOrDash(v *int) {
+	if v != nil {
+		if *v == 1000 {
+			{ "1000" }
+		} else {
+			<span class="badge mb-rssi-bad">{ fmt.Sprintf("%d", *v) }</span>
+		}
+	} else {
+		<span class="text-secondary">—</span>
+	}
+}
+
+// Ago renders a friendly "1m23s ago" string for a timestamp.
+templ Ago(t time.Time) {
+	if t.IsZero() {
+		<span class="text-secondary">never</span>
+	} else {
+		<span title={ t.UTC().Format(time.RFC3339) }>{ humanAgo(t) }</span>
+	}
+}

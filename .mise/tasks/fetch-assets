@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+#MISE description="Download Tabler + Datastar assets into internal/web/static/"
+#MISE sources=[".mise/tasks/fetch-assets"]
+#MISE outputs=["internal/web/static/tabler/tabler.min.css", "internal/web/static/tabler/tabler.min.js", "internal/web/static/tabler/tabler-icons.min.css", "internal/web/static/tabler/fonts/tabler-icons.woff2", "internal/web/static/tabler/fonts/tabler-icons.woff", "internal/web/static/tabler/fonts/tabler-icons.ttf", "internal/web/static/datastar/datastar.js"]
+set -euo pipefail
+
+# Pinned versions — bump here to upgrade. The Dockerfile and the mise task both
+# go through this single script, so this file is the only source of truth.
+: "${TABLER_VERSION:=1.0.0-beta20}"
+: "${TABLER_ICONS_VERSION:=3.39.0}"
+: "${DATASTAR_VERSION:=v1.0.0-beta.11}"
+
+TABLER_BASE="https://cdn.jsdelivr.net/npm/@tabler/core@${TABLER_VERSION}/dist"
+ICONS_BASE="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@${TABLER_ICONS_VERSION}/dist"
+DS_BASE="https://cdn.jsdelivr.net/gh/starfederation/datastar@${DATASTAR_VERSION}/bundles"
+
+mkdir -p internal/web/static/tabler/fonts internal/web/static/datastar
+
+fetch() {
+  local dest="$1" url="$2"
+  echo "fetch $url -> $dest"
+  curl -sSL --fail -o "$dest" "$url"
+}
+
+fetch internal/web/static/tabler/tabler.min.css           "$TABLER_BASE/css/tabler.min.css"
+fetch internal/web/static/tabler/tabler.min.js            "$TABLER_BASE/js/tabler.min.js"
+fetch internal/web/static/tabler/tabler-icons.min.css     "$ICONS_BASE/tabler-icons.min.css"
+fetch internal/web/static/tabler/fonts/tabler-icons.woff2 "$ICONS_BASE/fonts/tabler-icons.woff2"
+fetch internal/web/static/tabler/fonts/tabler-icons.woff  "$ICONS_BASE/fonts/tabler-icons.woff"
+fetch internal/web/static/tabler/fonts/tabler-icons.ttf   "$ICONS_BASE/fonts/tabler-icons.ttf"
+fetch internal/web/static/datastar/datastar.js            "$DS_BASE/datastar.js"

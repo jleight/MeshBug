@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: lint + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+        with:
+          experimental: true     # required for `mise install` to honour `go:` backends
+      - name: Run linter
+        run: mise run lint
+      - name: Run tests
+        run: mise run test
+      - name: Build
+        run: mise run build
+      - name: Helm lint
+        run: mise run helm-lint

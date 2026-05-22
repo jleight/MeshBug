@@ -1,0 +1,11 @@
+.git
+.gitignore
+.mise/config.local.toml
+*.local.toml
+.env*
+bin/
+dist/
+*.log
+.DS_Store
+deploy/
+README.md

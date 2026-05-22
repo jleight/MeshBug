@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "meshbug.fullname" . }}-config
+  labels: {{- include "meshbug.labels" . | nindent 4 }}
+data:
+  # Structural broker list (no creds). The app reads this file via
+  # MESHBUG_BROKERS_CONFIG and overlays creds from env vars named
+  # MESHBUG_BROKER_<NAME>_{USERNAME,PASSWORD}.
+  brokers.json: |
+{{- $brokers := list }}
+{{- range $b := .Values.brokers -}}
+{{- $brokers = append $brokers (dict "name" $b.name "url" $b.url "topicPrefix" (default "meshcore/" $b.topicPrefix)) }}
+{{- end }}
+    {{ toJson $brokers }}

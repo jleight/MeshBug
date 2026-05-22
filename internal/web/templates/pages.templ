@@ -1,0 +1,430 @@
+package templates
+
+import (
+	"fmt"
+	"time"
+)
+
+// ---------- types shared between handlers and templates ----------
+
+type OverviewData struct {
+	ObserversOnline    int
+	ObserversTotal     int
+	PacketsLastMinute  int
+	UniquePktsLastMin  int
+	OpenAnomalies      int
+	MeshSparkline      []float64
+	ObserverChannels   []ObserverChannel
+	GeneratedAt        time.Time
+}
+
+type ObserverChannel struct {
+	ID         []byte
+	Origin     string
+	Region     string
+	PctAir     float64 // 0..100 channel utilization estimate
+	NoiseFloor *int
+}
+
+type ObserverRow struct {
+	ID            []byte
+	Origin        string
+	Region        string
+	Model         string
+	Status        string
+	NoiseFloor    *int
+	UptimeSecs    *int64
+	LastPacketTS  time.Time
+	Packets1m     int
+	Sparkline     []float64
+}
+
+type ObserverDetail struct {
+	Row       ObserverRow
+	Status    []time.Time
+	StatusY   []float64    // noise floor over time, say
+	Neighbors []NeighborRow
+	TypeMix   []TypeCount
+	Gaps      []SeqGap
+}
+
+type NeighborRow struct {
+	SourcePrefix []byte
+	Packets      int
+	AvgRSSI      float64
+	MinRSSI      int
+	MaxRSSI      int
+	AvgSNR       float64
+	FirstSeen    time.Time
+	LastSeen     time.Time
+	HeardBy      int
+}
+
+type TypeCount struct {
+	Type  string
+	Count int
+}
+
+type SeqGap struct {
+	NeighborPrefix []byte
+	Window         string
+	Missing        int
+}
+
+type LivePacket struct {
+	TS         time.Time
+	ObserverID []byte
+	Origin     string
+	Hash       []byte
+	Type       string
+	Route      string
+	RSSI       *int
+	SNR        *float64
+	Score      *int
+	Source     []byte
+}
+
+type AnomalyRow struct {
+	ID       int64
+	TS       time.Time
+	Kind     string
+	Severity string
+	Subject  []byte
+	Details  map[string]any
+}
+
+type TopologyData struct {
+	Nodes []TopoNode
+	Edges []TopoEdge
+}
+
+type TopoNode struct {
+	ID      string // hex prefix or observer hash
+	Label   string
+	IsObserver bool
+	X, Y    float64
+}
+
+type TopoEdge struct {
+	From    string
+	To      string
+	FromX   float64
+	FromY   float64
+	ToX     float64
+	ToY     float64
+	Packets int
+	AvgRSSI float64
+}
+
+// ---------- pages ----------
+
+templ Overview(d OverviewData) {
+	@Layout("Overview", "/") {
+		<div class="row row-deck row-cards" data-on-load="@get('/sse/overview')" data-on-signal-patch="">
+			<div class="col-sm-6 col-lg-3">
+				@statTile("Observers online", fmt.Sprintf("%d / %d", d.ObserversOnline, d.ObserversTotal), "broadcast")
+			</div>
+			<div class="col-sm-6 col-lg-3">
+				@statTile("Packets / last min", fmt.Sprintf("%d", d.PacketsLastMinute), "activity")
+			</div>
+			<div class="col-sm-6 col-lg-3">
+				@statTile("Unique pkts / last min", fmt.Sprintf("%d", d.UniquePktsLastMin), "fingerprint")
+			</div>
+			<div class="col-sm-6 col-lg-3">
+				@statTile("Open anomalies", fmt.Sprintf("%d", d.OpenAnomalies), "alert-triangle")
+			</div>
+
+			<div class="col-12">
+				<div class="card">
+					<div class="card-header"><h3 class="card-title">Mesh packets / min (last 60 min)</h3></div>
+					<div class="card-body">
+						@Sparkline(d.MeshSparkline, 800, 80, "#206bc4")
+					</div>
+				</div>
+			</div>
+
+			<div class="col-12">
+				<div class="card">
+					<div class="card-header"><h3 class="card-title">Channel utilization per observer (estimated)</h3></div>
+					<div class="table-responsive">
+						<table class="table card-table">
+							<thead><tr><th>Observer</th><th>Region</th><th>Air time %</th><th>Noise floor</th></tr></thead>
+							<tbody>
+								for _, o := range d.ObserverChannels {
+									<tr>
+										<td><a href={ templ.SafeURL("/observers/" + HexFull(o.ID)) }>{ o.Origin }</a></td>
+										<td>{ o.Region }</td>
+										<td>
+											<div class="progress" style="width:160px">
+												<div class="progress-bar" style={ fmt.Sprintf("width: %.1f%%", o.PctAir) }>{ fmt.Sprintf("%.1f%%", o.PctAir) }</div>
+											</div>
+										</td>
+										<td>
+											@dbmOrDash(o.NoiseFloor)
+										</td>
+									</tr>
+								}
+							</tbody>
+						</table>
+					</div>
+				</div>
+			</div>
+		</div>
+	}
+}
+
+templ statTile(title, value, icon string) {
+	<div class="card card-sm">
+		<div class="card-body">
+			<div class="row align-items-center">
+				<div class="col-auto"><i class={ "ti ti-" + icon, "icon-lg" }></i></div>
+				<div class="col">
+					<div class="font-weight-medium">{ value }</div>
+					<div class="text-secondary">{ title }</div>
+				</div>
+			</div>
+		</div>
+	</div>
+}
+
+templ Observers(rows []ObserverRow) {
+	@Layout("Observers", "/observers") {
+		<div class="card">
+			<div class="card-header"><h3 class="card-title">Observer health</h3></div>
+			<div class="table-responsive">
+				<table class="table card-table table-vcenter">
+					<thead>
+						<tr>
+							<th>Observer</th>
+							<th>Region</th>
+							<th>Status</th>
+							<th>Pkts/min</th>
+							<th>Sparkline (60m)</th>
+							<th>Noise floor</th>
+							<th>Uptime</th>
+							<th>Last pkt</th>
+						</tr>
+					</thead>
+					<tbody>
+						for _, r := range rows {
+							<tr>
+								<td><a href={ templ.SafeURL("/observers/" + HexFull(r.ID)) } class="mb-mono">{ r.Origin }</a></td>
+								<td>{ r.Region }</td>
+								<td>@StatusPill(r.Status)</td>
+								<td>{ fmt.Sprintf("%d", r.Packets1m) }</td>
+								<td>@Sparkline(r.Sparkline, 200, 30, "#206bc4")</td>
+								<td>
+									@dbmOrDash(r.NoiseFloor)
+								</td>
+								<td>
+									@durationOrDash(r.UptimeSecs)
+								</td>
+								<td>@Ago(r.LastPacketTS)</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			</div>
+		</div>
+	}
+}
+
+templ ObserverPage(d ObserverDetail) {
+	@Layout("Observer "+d.Row.Origin, "/observers") {
+		<div class="row row-cards">
+			<div class="col-md-4">
+				<div class="card"><div class="card-body">
+					<h2 class="card-title">{ d.Row.Origin }</h2>
+					<div class="mb-mono">{ HexFull(d.Row.ID) }</div>
+					<div class="mt-2">Region: { d.Row.Region }</div>
+					<div>Model: { d.Row.Model }</div>
+					<div>Status: @StatusPill(d.Row.Status)</div>
+					<div class="mt-2">Packets last min: <b>{ fmt.Sprintf("%d", d.Row.Packets1m) }</b></div>
+					<div>Noise floor: @dbmOrDash(d.Row.NoiseFloor)</div>
+					<div>Uptime: @durationOrDash(d.Row.UptimeSecs)</div>
+				</div></div>
+			</div>
+			<div class="col-md-8">
+				<div class="card"><div class="card-header"><h3 class="card-title">Pkts/min (60 min)</h3></div>
+					<div class="card-body">@Sparkline(d.Row.Sparkline, 600, 100, "#206bc4")</div>
+				</div>
+			</div>
+
+			<div class="col-12">
+				<div class="card">
+					<div class="card-header"><h3 class="card-title">Neighbors heard</h3></div>
+					<div class="table-responsive">
+						<table class="table card-table table-vcenter">
+							<thead><tr><th>Source</th><th>Packets</th><th>RSSI min/avg/max</th><th>SNR avg</th><th>First seen</th><th>Last seen</th><th>Heard by N obs</th></tr></thead>
+							<tbody>
+								for _, n := range d.Neighbors {
+									<tr>
+										<td class="mb-mono">{ HexShort(n.SourcePrefix) }</td>
+										<td>{ fmt.Sprintf("%d", n.Packets) }</td>
+										<td class={ rssiBadgeClass(n.MinRSSI) }>{ fmt.Sprintf("%d / %.0f / %d", n.MinRSSI, n.AvgRSSI, n.MaxRSSI) }</td>
+										<td>{ fmt.Sprintf("%.1f", n.AvgSNR) }</td>
+										<td>@Ago(n.FirstSeen)</td>
+										<td>@Ago(n.LastSeen)</td>
+										<td>{ fmt.Sprintf("%d", n.HeardBy) }</td>
+									</tr>
+								}
+							</tbody>
+						</table>
+					</div>
+				</div>
+			</div>
+
+			<div class="col-md-6">
+				<div class="card"><div class="card-header"><h3 class="card-title">Packet type mix</h3></div>
+					<div class="table-responsive"><table class="table card-table"><tbody>
+						for _, t := range d.TypeMix {
+							<tr><td>{ t.Type }</td><td>{ fmt.Sprintf("%d", t.Count) }</td></tr>
+						}
+					</tbody></table></div>
+				</div>
+			</div>
+
+			<div class="col-md-6">
+				<div class="card"><div class="card-header"><h3 class="card-title">Sequence gaps (suspected missed pkts)</h3></div>
+					<div class="table-responsive"><table class="table card-table"><thead><tr><th>Neighbor</th><th>Window</th><th>Missing</th></tr></thead><tbody>
+						for _, g := range d.Gaps {
+							<tr><td class="mb-mono">{ HexShort(g.NeighborPrefix) }</td><td>{ g.Window }</td><td>{ fmt.Sprintf("%d", g.Missing) }</td></tr>
+						}
+					</tbody></table></div>
+				</div>
+			</div>
+		</div>
+	}
+}
+
+templ Neighbors(rows []NeighborRow) {
+	@Layout("Neighbors", "/neighbors") {
+		<div class="card">
+			<div class="card-header"><h3 class="card-title">All neighbors heard (last 24h)</h3></div>
+			<div class="table-responsive">
+				<table class="table card-table table-vcenter">
+					<thead><tr><th>Source</th><th>Packets</th><th>RSSI min/avg/max</th><th>SNR avg</th><th>First seen</th><th>Last seen</th><th>Heard by N observers</th></tr></thead>
+					<tbody>
+						for _, n := range rows {
+							<tr>
+								<td class="mb-mono">{ HexShort(n.SourcePrefix) }</td>
+								<td>{ fmt.Sprintf("%d", n.Packets) }</td>
+								<td class={ rssiBadgeClass(n.MinRSSI) }>{ fmt.Sprintf("%d / %.0f / %d", n.MinRSSI, n.AvgRSSI, n.MaxRSSI) }</td>
+								<td>{ fmt.Sprintf("%.1f", n.AvgSNR) }</td>
+								<td>@Ago(n.FirstSeen)</td>
+								<td>@Ago(n.LastSeen)</td>
+								<td>{ fmt.Sprintf("%d", n.HeardBy) }</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			</div>
+		</div>
+	}
+}
+
+templ LiveFeed(initial []LivePacket) {
+	@Layout("Live packet feed", "/packets/live") {
+		<div class="card">
+			<div class="card-header"><h3 class="card-title">Live packet feed (newest first)</h3></div>
+			<div class="table-responsive">
+				<table class="table card-table table-vcenter">
+					<thead>
+						<tr><th>Time</th><th>Observer</th><th>Type</th><th>Route</th><th>Source</th><th>RSSI</th><th>SNR</th><th>Score</th><th>Hash</th></tr>
+					</thead>
+					<tbody id="live-rows" data-on-load="@get('/sse/live-feed')">
+						for _, p := range initial {
+							@LivePacketRow(p)
+						}
+					</tbody>
+				</table>
+			</div>
+		</div>
+	}
+}
+
+templ LivePacketRow(p LivePacket) {
+	<tr class="mb-live-row">
+		<td class="mb-mono">{ p.TS.Format("15:04:05") }</td>
+		<td class="mb-mono">{ shortName(p.Origin) }</td>
+		<td>{ p.Type }</td>
+		<td>{ p.Route }</td>
+		<td class="mb-mono">{ HexShort(p.Source) }</td>
+		<td>@rssiOrDash(p.RSSI)</td>
+		<td>@snrOrDash(p.SNR)</td>
+		<td>@scoreOrDash(p.Score)</td>
+		<td class="mb-mono">{ HexShort(p.Hash) }</td>
+	</tr>
+}
+
+templ Anomalies(rows []AnomalyRow) {
+	@Layout("Anomalies", "/anomalies") {
+		<div class="card">
+			<div class="card-header"><h3 class="card-title">Recent anomalies</h3></div>
+			<div class="table-responsive">
+				<table class="table card-table table-vcenter">
+					<thead><tr><th>Time</th><th>Severity</th><th>Kind</th><th>Subject</th><th>Details</th></tr></thead>
+					<tbody>
+						for _, a := range rows {
+							<tr>
+								<td>@Ago(a.TS)</td>
+								<td>@severityBadge(a.Severity)</td>
+								<td>{ a.Kind }</td>
+								<td class="mb-mono">{ HexShort(a.Subject) }</td>
+								<td class="mb-mono">{ fmt.Sprintf("%v", a.Details) }</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			</div>
+		</div>
+	}
+}
+
+templ severityBadge(s string) {
+	switch s {
+	case "crit":
+		<span class="badge bg-red">crit</span>
+	case "warn":
+		<span class="badge bg-yellow">warn</span>
+	default:
+		<span class="badge bg-blue">info</span>
+	}
+}
+
+templ Topology(d TopologyData) {
+	@Layout("Topology", "/topology") {
+		<div class="card">
+			<div class="card-header"><h3 class="card-title">Mesh topology (observers + sources heard, last 24h)</h3></div>
+			<div class="card-body mb-topo">
+				@topoSVG(d)
+			</div>
+		</div>
+	}
+}
+
+templ topoSVG(d TopologyData) {
+	<svg viewBox="0 0 1000 700">
+		for _, e := range d.Edges {
+			@topoEdge(e)
+		}
+		for _, n := range d.Nodes {
+			@topoNode(n)
+		}
+	</svg>
+}
+
+templ topoEdge(e TopoEdge) {
+	<line x1={ fmt.Sprintf("%.1f", e.FromX) } y1={ fmt.Sprintf("%.1f", e.FromY) } x2={ fmt.Sprintf("%.1f", e.ToX) } y2={ fmt.Sprintf("%.1f", e.ToY) } stroke={ edgeColor(e.AvgRSSI) } stroke-width={ fmt.Sprintf("%.1f", edgeWidth(e.Packets)) } opacity="0.6"/>
+}
+
+templ topoNode(n TopoNode) {
+	<g>
+		if n.IsObserver {
+			<circle cx={ fmt.Sprintf("%.1f", n.X) } cy={ fmt.Sprintf("%.1f", n.Y) } r="9" fill="#206bc4"/>
+		} else {
+			<circle cx={ fmt.Sprintf("%.1f", n.X) } cy={ fmt.Sprintf("%.1f", n.Y) } r="6" fill="#999"/>
+		}
+		<text x={ fmt.Sprintf("%.1f", n.X+10) } y={ fmt.Sprintf("%.1f", n.Y+4) } font-size="11" fill="#333">{ n.Label }</text>
+	</g>
+}

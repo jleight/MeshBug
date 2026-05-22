@@ -1,0 +1,106 @@
+[tools]
+go = "latest"
+"go:github.com/a-h/templ/cmd/templ" = "latest"
+"go:github.com/golang-migrate/migrate/v4/cmd/migrate" = "latest"
+"go:github.com/golangci/golangci-lint/v2/cmd/golangci-lint" = "latest"
+helm = "latest"
+
+[env]
+MESHBUG_HTTP_ADDR = ":8080"
+MESHBUG_AUTO_MIGRATE = "true"
+MESHBUG_LOG_LEVEL = "info"
+
+[tasks.generate]
+description = "Run templ generate"
+run = "templ generate"
+
+[tasks."clean-assets"]
+description = "Remove vendored Tabler + Datastar files (forces re-fetch on next build)"
+run = '''
+rm -f internal/web/static/tabler/tabler.min.css \
+      internal/web/static/tabler/tabler.min.js \
+      internal/web/static/tabler/tabler-icons.min.css \
+      internal/web/static/tabler/fonts/tabler-icons.woff2 \
+      internal/web/static/tabler/fonts/tabler-icons.woff \
+      internal/web/static/tabler/fonts/tabler-icons.ttf \
+      internal/web/static/datastar/datastar.js
+'''
+
+[tasks.build]
+description = "Build the meshbug binary"
+depends = ["fetch-assets", "generate"]
+run = "go build -o bin/meshbug ./cmd/meshbug"
+
+[tasks.test]
+description = "Run go tests"
+depends = ["fetch-assets", "generate"]
+run = "go test ./..."
+
+[tasks.lint]
+description = "Run golangci-lint"
+depends = ["fetch-assets", "generate"]
+run = "golangci-lint run"
+
+[tasks.run]
+description = "Run meshbug against the live broker (uses MQTT_* env from .local.toml)"
+depends = ["fetch-assets", "generate"]
+run = '''
+if [ -z "${MESHBUG_BROKERS_JSON:-}" ] && [ -n "${MQTT_BROKER:-}" ]; then
+  export MESHBUG_BROKERS_JSON="$(printf '[{"name":"home","url":"%s","username":"%s","password":"%s","topicPrefix":"meshcore/"}]' "$MQTT_BROKER" "$MQTT_USER" "$MQTT_PASSWORD")"
+fi
+exec go run ./cmd/meshbug
+'''
+
+[tasks."migrate-up"]
+description = "Apply database migrations"
+run = "migrate -path internal/store/migrations -database \"$MESHBUG_DATABASE_URL\" up"
+
+[tasks."migrate-down"]
+description = "Roll back the last migration"
+run = "migrate -path internal/store/migrations -database \"$MESHBUG_DATABASE_URL\" down 1"
+
+[tasks."migrate-new"]
+description = "Create a new migration. Usage: mise run migrate-new -- <name>"
+run = "migrate create -ext sql -dir internal/store/migrations -seq ${1:?name required}"
+
+[tasks.psql]
+description = "Open psql against $MESHBUG_DATABASE_URL"
+run = "psql \"$MESHBUG_DATABASE_URL\""
+
+[tasks."pg-up"]
+description = "Run a local Postgres in Docker for development"
+run = "docker run --rm -d --name meshbug-pg -e POSTGRES_PASSWORD=meshbug -e POSTGRES_DB=meshbug -p 5432:5432 postgres:16"
+
+[tasks."pg-down"]
+description = "Stop the local development Postgres"
+run = "docker rm -f meshbug-pg"
+
+[tasks.docker]
+description = "Build the meshbug Docker image"
+run = "docker build -t meshbug:dev ."
+
+[tasks."helm-lint"]
+description = "Lint the Helm chart"
+run = "helm lint deploy/helm/meshbug"
+
+[tasks."helm-template"]
+description = "Render the Helm chart"
+run = "helm template meshbug deploy/helm/meshbug"
+
+[tasks."init-local"]
+description = "Scaffold .mise/config.local.toml (gitignored) for secrets"
+run = '''
+if [ -f .mise/config.local.toml ]; then
+  echo ".mise/config.local.toml already exists — leaving alone."
+  exit 0
+fi
+cat > .mise/config.local.toml <<'EOF'
+[env]
+# Local secrets — never commit this file.
+MESHBUG_DATABASE_URL = "postgres://postgres:meshbug@localhost:5432/meshbug?sslmode=disable"
+MQTT_BROKER   = "wss://mqtt.example.com"
+MQTT_USER     = "user"
+MQTT_PASSWORD = "password"
+EOF
+echo "Wrote .mise/config.local.toml — fill in real values."
+'''

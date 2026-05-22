@@ -1,0 +1,60 @@
+package templates
+
+templ Layout(title string, activeNav string) {
+	<!doctype html>
+	<html lang="en">
+		<head>
+			<meta charset="utf-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			<title>{ title } — MeshBug</title>
+			<link rel="stylesheet" href="/static/tabler/tabler.min.css"/>
+			<link rel="stylesheet" href="/static/tabler/tabler-icons.min.css"/>
+			<link rel="stylesheet" href="/static/datastar/app.css"/>
+			<script type="module" src="/static/datastar/datastar.js"></script>
+		</head>
+		<body>
+			<div class="page">
+				@navbar(activeNav)
+				<div class="page-wrapper">
+					<div class="page-body">
+						<div class="container-xl">
+							{ children... }
+						</div>
+					</div>
+					<footer class="footer footer-transparent">
+						<div class="container-xl">
+							<div class="text-secondary">MeshBug — MeshCore mesh diagnostic dashboard</div>
+						</div>
+					</footer>
+				</div>
+			</div>
+		</body>
+	</html>
+}
+
+templ navbar(active string) {
+	<header class="navbar navbar-expand-md navbar-dark d-print-none">
+		<div class="container-xl">
+			<h1 class="navbar-brand"><a href="/">MeshBug</a></h1>
+			<div class="collapse navbar-collapse">
+				<ul class="navbar-nav">
+					@navItem("/", "Overview", "dashboard", active)
+					@navItem("/observers", "Observers", "broadcast", active)
+					@navItem("/neighbors", "Neighbors", "users", active)
+					@navItem("/topology", "Topology", "binary-tree", active)
+					@navItem("/packets/live", "Live feed", "activity", active)
+					@navItem("/anomalies", "Anomalies", "alert-triangle", active)
+				</ul>
+			</div>
+		</div>
+	</header>
+}
+
+templ navItem(href, label, icon, active string) {
+	<li class={ "nav-item", templ.KV("active", href == active) }>
+		<a class="nav-link" href={ templ.SafeURL(href) }>
+			<span class="nav-link-icon"><i class={ "ti", "ti-" + icon }></i></span>
+			<span class="nav-link-title">{ label }</span>
+		</a>
+	</li>
+}

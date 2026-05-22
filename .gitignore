@@ -1,0 +1,26 @@
+# secrets and local overrides
+.mise/config.local.toml
+*.local.toml
+.env
+.env.*
+
+# build artifacts
+/bin/
+/dist/
+
+# templ generated files
+internal/web/templates/*_templ.go
+internal/web/templates/**/*_templ.go
+
+# vendored web assets — fetched by `mise run fetch-assets`
+internal/web/static/tabler/tabler.min.css
+internal/web/static/tabler/tabler.min.js
+internal/web/static/tabler/tabler-icons.min.css
+internal/web/static/tabler/fonts/
+internal/web/static/datastar/datastar.js
+
+# misc
+*.log
+.DS_Store
+.idea/
+.vscode/

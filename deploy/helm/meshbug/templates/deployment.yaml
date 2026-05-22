@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "meshbug.fullname" . }}
+  labels: {{- include "meshbug.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: {{- include "meshbug.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "meshbug.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}{{ toYaml . | nindent 8 }}{{- end }}
+    spec:
+      serviceAccountName: {{ include "meshbug.serviceAccountName" . }}
+      containers:
+        - name: meshbug
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            {{- range $k, $v := .Values.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+            - name: MESHBUG_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgres.existingSecret }}
+                  key: {{ .Values.postgres.existingSecretKey }}
+            - name: MESHBUG_BROKERS_CONFIG
+              value: /etc/meshbug/brokers.json
+            {{- range $b := .Values.brokers }}
+            {{- $envKey := upper (replace "-" "_" $b.name) }}
+            - name: MESHBUG_BROKER_{{ $envKey }}_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $b.existingSecret }}
+                  key: {{ default "username" $b.usernameKey }}
+            - name: MESHBUG_BROKER_{{ $envKey }}_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $b.existingSecret }}
+                  key: {{ default "password" $b.passwordKey }}
+            {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/meshbug
+              readOnly: true
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 10
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "meshbug.fullname" . }}-config
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}{{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}{{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}{{- end }}
