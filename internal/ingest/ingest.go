@@ -195,7 +195,7 @@ func (i *Ingester) handlePacket(msg mqtt.Message, obsID []byte, _ string, batch 
 		ObserverID: obsID,
 		PacketHash: packetHash,
 		Direction:  m.Direction,
-		PacketType: m.PacketType,
+		PacketType: string(m.PacketType),
 		Route:      m.Route,
 		Len:        atoiFlex(m.Len),
 		PayloadLen: atoiFlex(m.PayloadLen),

@@ -45,7 +45,7 @@ type packetMessage struct {
 	Type       string  `json:"type"`
 	Direction  string  `json:"direction"`
 	Len        flexStr `json:"len"`
-	PacketType string  `json:"packet_type"`
+	PacketType flexStr `json:"packet_type"` // some observers publish this as a JSON number (e.g. 0), others as a string
 	Route      string  `json:"route"`
 	PayloadLen flexStr `json:"payload_len"`
 	Raw        string  `json:"raw"`
@@ -54,6 +54,7 @@ type packetMessage struct {
 	Score      flexStr `json:"score"`
 	Duration   flexStr `json:"duration"`
 	Hash       string  `json:"hash"`
+	Path       string  `json:"path"` // observers may include the accumulated path as a hex string, e.g. "F0 B7"
 }
 
 // flexStr captures a JSON value that may arrive as a string OR a number.
