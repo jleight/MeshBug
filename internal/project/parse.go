@@ -1,4 +1,4 @@
-package ingest
+package project
 
 import (
 	"encoding/hex"
@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 )
 
 // statusMessage matches the JSON shape of meshcore/<region>/<hash>/status.
@@ -101,23 +100,6 @@ func parseTopicHash(prefix, topic string) (id []byte, region string, kind string
 		return nil, "", "", fmt.Errorf("topic hash %q has %d bytes, want 32", hashStr, len(id))
 	}
 	return id, region, kind, nil
-}
-
-func parseTimestamp(s string) (time.Time, error) {
-	if s == "" {
-		return time.Time{}, fmt.Errorf("empty timestamp")
-	}
-	for _, layout := range []string{
-		time.RFC3339Nano,
-		time.RFC3339,
-		"2006-01-02T15:04:05.999999",
-		"2006-01-02T15:04:05",
-	} {
-		if t, err := time.Parse(layout, s); err == nil {
-			return t.UTC(), nil
-		}
-	}
-	return time.Time{}, fmt.Errorf("unrecognized timestamp %q", s)
 }
 
 // parseRadio splits the "freq,bw,sf,cr" form into typed pointers (any blank).

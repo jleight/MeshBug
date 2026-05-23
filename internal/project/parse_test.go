@@ -1,4 +1,4 @@
-package ingest
+package project
 
 import (
 	"encoding/hex"

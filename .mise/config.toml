@@ -51,22 +51,33 @@ fi
 exec go run ./cmd/meshbug ingest
 '''
 
+[tasks.project]
+description = "Run the projector locally (derives state from raw_events into the read tables, hosts rollup + anomaly workers)"
+depends = ["fetch-assets", "generate"]
+run = "exec go run ./cmd/meshbug project"
+
+[tasks."project-reset"]
+description = "Truncate every derived table and rebuild from raw_events"
+depends = ["fetch-assets", "generate"]
+run = "exec go run ./cmd/meshbug project --reset"
+
 [tasks.web]
 description = "Run the web service locally (UI + SSE; point MESHBUG_DATABASE_URL at any reachable Postgres)"
 depends = ["fetch-assets", "generate"]
 run = "exec go run ./cmd/meshbug web"
 
 [tasks."migrate-up"]
-description = "Apply database migrations"
-run = "migrate -path internal/store/migrations -database \"$MESHBUG_DATABASE_URL\" up"
-
-[tasks."migrate-down"]
-description = "Roll back the last migration"
-run = "migrate -path internal/store/migrations -database \"$MESHBUG_DATABASE_URL\" down 1"
+description = "Apply database migrations (all scopes: common, ingest, project)"
+depends = ["generate"]
+run = "exec go run ./cmd/meshbug migrate all"
 
 [tasks."migrate-new"]
-description = "Create a new migration. Usage: mise run migrate-new -- <name>"
-run = "migrate create -ext sql -dir internal/store/migrations -seq ${1:?name required}"
+description = "Create a new migration. Usage: mise run migrate-new -- <scope> <name>"
+run = '''
+scope="${1:?scope required (common|ingest|project)}"
+name="${2:?name required}"
+migrate create -ext sql -dir "internal/store/migrations/${scope}" -seq "$name"
+'''
 
 [tasks.psql]
 description = "Open psql against $MESHBUG_DATABASE_URL"

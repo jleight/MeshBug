@@ -1,4 +1,3 @@
-DROP TABLE IF EXISTS _partition_state;
 DROP TABLE IF EXISTS anomalies;
 DROP TABLE IF EXISTS rollup_neighbor_1m;
 DROP TABLE IF EXISTS rollup_observer_1h;
@@ -9,3 +8,4 @@ DROP TABLE IF EXISTS packet_observations;
 DROP SEQUENCE IF EXISTS packet_observations_id_seq;
 DROP TABLE IF EXISTS observer_status;
 DROP TABLE IF EXISTS observers;
+DROP TABLE IF EXISTS projector_state;

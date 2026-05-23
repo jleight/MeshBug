@@ -55,19 +55,38 @@ MQTT broker(s) ─┐
 - Retention: forever. The packets table is monthly-partitioned so storage
   growth doesn't degrade query performance.
 
-## Two services
+## Three services (event-sourced)
 
-MeshBug ships as one binary with two subcommands. Run them as separate
-processes (locally or in your cluster); they communicate only through
-Postgres rows and `LISTEN`/`NOTIFY` traffic.
+MeshBug ships as one binary with three subcommands forming a write-side ⇒
+read-side pipeline. They communicate only through Postgres.
 
-| Subcommand        | Reads MQTT | Writes Postgres | Runs HTTP | Notes |
-| ----------------- | :--------: | :-------------: | :-------: | ----- |
-| `meshbug ingest`  | ✓          | ✓               |           | Also runs rollup, anomaly, and partition-maintenance workers. Owns schema migrations. **Exactly one instance per database.** |
-| `meshbug web`     |            |                 | ✓         | Reads from Postgres, listens for `pg_notify` from ingest, pushes SSE patches to browsers. Horizontally scalable. |
+```
+MQTT brokers ──► [ingest] ──► raw_events  ──►  [project] ──► observers
+                              (append-only)                    observer_status
+                                                               packet_observations
+                                                               packets_unique
+                                                               rollups + anomalies
+                                                                          │
+                                                                  pg_notify
+                                                                          ▼
+                                                                       [web] ──► browser (SSE)
+```
 
-This split lets you keep ingest running 24/7 in your cluster and develop the
-UI locally against the same Postgres without producing background writes.
+| Subcommand        | Reads MQTT | Writes raw_events | Writes derived tables | Runs HTTP | Replicas |
+| ----------------- | :--------: | :---------------: | :-------------------: | :-------: | -------- |
+| `meshbug ingest`  | ✓          | ✓                 |                       |           | 1+       |
+| `meshbug project` |            |                   | ✓ (rollup + anomaly)  |           | **exactly 1** |
+| `meshbug web`     |            |                   |                       | ✓         | 1+       |
+
+`raw_events` is the immutable source of truth. The projector reads from it
+in order, decodes each MQTT payload, and writes the derived tables. If the
+projector logic ever changes (new fields, new derivations, decoder bug fix),
+`meshbug project --reset` truncates every derived table and rebuilds from
+`raw_events` end-to-end. The raw bytes are never modified.
+
+For local UI development against your cluster's data, run only `mise run web`
+and point `MESHBUG_DATABASE_URL` at your cluster's Postgres. Ingest and
+project stay deployed and continue to advance state.
 
 ## Quickstart (local development)
 
@@ -83,13 +102,19 @@ mise run init-local       # scaffolds .mise/config.local.toml (gitignored)
 # locally as well.
 
 mise run pg-up            # ephemeral Postgres in Docker (skip if using a remote DB)
-mise run migrate-up
+mise run migrate-up       # applies all scopes (common, ingest, project)
 
 # In one terminal:
-mise run ingest           # MQTT → Postgres (+ rollup + anomaly workers)
+mise run ingest           # MQTT → raw_events (no derivation)
 
 # In another terminal:
+mise run project          # raw_events → derived tables + rollup + anomaly
+
+# In a third terminal:
 mise run web              # serves http://localhost:8080
+
+# (If you ever need to rebuild every derived table from raw_events:)
+mise run project-reset
 ```
 
 **Developing UI against a remote Postgres:** point `MESHBUG_DATABASE_URL` at
@@ -193,7 +218,8 @@ internal/
   config/                   # env-driven config loader
   mqtt/                     # paho MQTT manager (1..N brokers)
   meshcore/                 # MeshCore wire-format header decoder
-  ingest/                   # MQTT → typed rows → batched pgx.CopyFrom
+  ingest/                   # MQTT → raw_events (append-only, no decoding)
+  project/                  # raw_events → derived tables; cursor + reset support
   notify/                   # cross-process pub/sub via Postgres LISTEN/NOTIFY
   store/                    # pgx pool, queries, embedded migrations, partitions
   rollup/                   # 1m and 1h aggregation workers

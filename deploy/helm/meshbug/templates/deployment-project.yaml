@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "meshbug.fullname" . }}-project
+  labels:
+    {{- include "meshbug.labels" . | nindent 4 }}
+    app.kubernetes.io/component: project
+spec:
+  # Single replica: cursor advancement, rollup + anomaly workers all assume
+  # one writer per database. Don't scale above 1.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "meshbug.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: project
+  template:
+    metadata:
+      labels:
+        {{- include "meshbug.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: project
+      {{- with .Values.project.podAnnotations }}
+      annotations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "meshbug.serviceAccountName" . }}
+      containers:
+        - name: project
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["project"]
+          env:
+            - name: MESHBUG_LOG_LEVEL
+              value: {{ .Values.logLevel | quote }}
+            - name: MESHBUG_AUTO_MIGRATE
+              value: {{ .Values.project.autoMigrate | quote }}
+            - name: MESHBUG_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgres.existingSecret }}
+                  key: {{ .Values.postgres.existingSecretKey }}
+          resources: {{- toYaml .Values.project.resources | nindent 12 }}
+      {{- with .Values.project.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.project.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.project.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -7,16 +7,16 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
-	"github.com/jleight/meshbug/internal/anomaly"
 	"github.com/jleight/meshbug/internal/config"
 	"github.com/jleight/meshbug/internal/ingest"
 	"github.com/jleight/meshbug/internal/mqtt"
-	"github.com/jleight/meshbug/internal/rollup"
 	"github.com/jleight/meshbug/internal/store"
 )
 
+// runIngest is the MQTT → raw_events capture loop. It does no decoding or
+// derivation — everything that turns those bytes into structured rows lives
+// in `meshbug project`.
 func runIngest(_ []string) {
 	cfg, err := config.LoadIngest()
 	if err != nil {
@@ -26,8 +26,8 @@ func runIngest(_ []string) {
 	slog.SetDefault(log)
 
 	if cfg.AutoMigrate {
-		log.Info("running migrations")
-		if err := store.RunMigrations(cfg.DatabaseURL); err != nil {
+		log.Info("running migrations", "scopes", []store.Scope{store.ScopeCommon, store.ScopeIngest})
+		if err := store.RunMigrations(cfg.DatabaseURL, store.ScopeCommon, store.ScopeIngest); err != nil {
 			fail("migrate", err)
 		}
 	}
@@ -41,7 +41,10 @@ func runIngest(_ []string) {
 	}
 	defer st.Close()
 
-	if err := st.EnsurePartitions(ctx, time.Now().UTC()); err != nil {
+	// raw_events is partitioned monthly — make sure the current and next
+	// month's partition exist (the project service also calls this, but ingest
+	// might come up first on a fresh install).
+	if err := st.EnsurePartitions(ctx, nowUTC()); err != nil {
 		fail("partitions", err)
 	}
 
@@ -50,29 +53,10 @@ func runIngest(_ []string) {
 		fail("mqtt", err)
 	}
 
-	ing := ingest.New(cfg.Brokers, st, mgr.Messages(), log)
+	ing := ingest.New(st, mgr.Messages(), log)
 	go func() {
 		if err := ing.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			log.Error("ingest stopped", "err", err)
-		}
-	}()
-
-	go rollup.New(st, log).Run(ctx)
-	go anomaly.New(st, log).Run(ctx)
-
-	// daily partition maintainer
-	go func() {
-		t := time.NewTicker(6 * time.Hour)
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-				if err := st.EnsurePartitions(ctx, time.Now().UTC()); err != nil {
-					log.Warn("partition maintenance", "err", err)
-				}
-			}
 		}
 	}()
 

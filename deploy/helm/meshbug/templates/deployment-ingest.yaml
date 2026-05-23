@@ -6,11 +6,9 @@ metadata:
     {{- include "meshbug.labels" . | nindent 4 }}
     app.kubernetes.io/component: ingest
 spec:
-  # Single replica: rollup + anomaly workers + partition maintenance all
-  # assume one writer per database. Don't scale this above 1.
-  replicas: 1
-  strategy:
-    type: Recreate
+  # Ingest only writes to the append-only raw_events log — multiple replicas
+  # are safe, but a single one is plenty for any realistic mesh.
+  replicas: {{ .Values.ingest.replicaCount | default 1 }}
   selector:
     matchLabels:
       {{- include "meshbug.selectorLabels" . | nindent 6 }}

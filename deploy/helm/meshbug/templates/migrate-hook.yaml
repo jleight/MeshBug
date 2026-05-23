@@ -1,0 +1,40 @@
+{{- if .Values.migrationHook.enabled -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "meshbug.fullname" . }}-migrate-{{ .Release.Revision }}
+  labels:
+    {{- include "meshbug.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    # Run before the ingest/project Deployments come up so the schema is ready
+    # and AUTO_MIGRATE on the apps can stay off.
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migrationHook.backoffLimit }}
+  ttlSecondsAfterFinished: {{ .Values.migrationHook.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        {{- include "meshbug.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ include "meshbug.serviceAccountName" . }}
+      containers:
+        - name: migrate
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["migrate", "all"]
+          env:
+            - name: MESHBUG_LOG_LEVEL
+              value: {{ .Values.logLevel | quote }}
+            - name: MESHBUG_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgres.existingSecret }}
+                  key: {{ .Values.postgres.existingSecretKey }}
+          resources: {{- toYaml .Values.migrationHook.resources | nindent 12 }}
+{{- end }}

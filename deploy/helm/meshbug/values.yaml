@@ -24,11 +24,35 @@ postgres:
 #     passwordKey: password
 brokers: []
 
-ingest:
-  autoMigrate: true     # ingest runs the migrations (it owns the schema)
+# A Job that runs `meshbug migrate all` as a Helm pre-install/pre-upgrade hook.
+# With this enabled (the default), the ingest and project Deployments can keep
+# autoMigrate off — there's no race on startup, and rollbacks don't risk
+# applying migrations from a newer release.
+migrationHook:
+  enabled: true
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
   resources:
-    requests: { cpu: 50m, memory: 96Mi }
-    limits:   { cpu: 500m, memory: 256Mi }
+    requests: { cpu: 50m, memory: 64Mi }
+    limits:   { cpu: 250m, memory: 128Mi }
+
+ingest:
+  replicaCount: 1
+  autoMigrate: false    # the migration hook handles it. Flip on if you skip the hook.
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits:   { cpu: 250m, memory: 128Mi }
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+project:
+  # Single replica only — cursor + rollup + anomaly workers assume one writer.
+  autoMigrate: false    # see migrationHook above
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits:   { cpu: 1, memory: 512Mi }
   podAnnotations: {}
   nodeSelector: {}
   tolerations: []
