@@ -238,10 +238,19 @@ templ ObserverPage(d ObserverDetail) {
 					<div class="mb-mono">{ HexFull(d.Row.ID) }</div>
 					<div class="mt-2">Region: { d.Row.Region }</div>
 					<div>Model: { d.Row.Model }</div>
-					<div>Status: @StatusPill(d.Row.Status)</div>
+					<div>
+						Status:
+						@StatusPill(d.Row.Status)
+					</div>
 					<div class="mt-2">Packets last min: <b>{ fmt.Sprintf("%d", d.Row.Packets1m) }</b></div>
-					<div>Noise floor: @dbmOrDash(d.Row.NoiseFloor)</div>
-					<div>Uptime: @durationOrDash(d.Row.UptimeSecs)</div>
+					<div>
+						Noise floor:
+						@dbmOrDash(d.Row.NoiseFloor)
+					</div>
+					<div>
+						Uptime:
+						@durationOrDash(d.Row.UptimeSecs)
+					</div>
 				</div></div>
 			</div>
 			<div class="col-md-8">
