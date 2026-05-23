@@ -22,7 +22,6 @@ spec:
         app.kubernetes.io/component: migrate
     spec:
       restartPolicy: OnFailure
-      serviceAccountName: {{ include "meshbug.serviceAccountName" . }}
       containers:
         - name: migrate
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
