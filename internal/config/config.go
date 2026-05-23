@@ -17,17 +17,39 @@ type Broker struct {
 	TopicPrefix string `json:"topicPrefix,omitempty"`
 }
 
-// Config holds everything that the two services share or each one needs.
-// LoadIngest / LoadWeb populate the appropriate subset and validate it.
+// Config holds everything that the services share or each one needs.
+// LoadIngest / LoadProject / LoadWeb / LoadMigrate populate the appropriate
+// subset and validate it.
+//
+// Database URLs: MeshBug splits state across two schemas (`ingest` and
+// `project`) that can optionally live in different databases. In the common
+// case both URLs point at the same database; in dev you can point ingest at
+// a prod read-replica while keeping projections local.
+//
+//   - DatabaseURL          (MESHBUG_DATABASE_URL) — owns the `project` and
+//     `web` schemas. Always required.
+//   - IngestDatabaseURL    (MESHBUG_INGEST_DATABASE_URL) — owns the `ingest`
+//     schema. Optional; falls back to DatabaseURL when unset.
 type Config struct {
 	LogLevel slog.Level
 
-	DatabaseURL string
-	AutoMigrate bool
+	DatabaseURL       string
+	IngestDatabaseURL string
 
 	Brokers []Broker
 
 	HTTPAddr string
+}
+
+// LoadMigrate reads the env vars the migration runner needs.
+func LoadMigrate() (*Config, error) {
+	c := loadCommon()
+
+	if err := loadDatabase(c); err != nil {
+		return nil, err
+	}
+
+	return c, nil
 }
 
 // LoadIngest reads the env vars the ingest service needs.
@@ -85,7 +107,10 @@ func loadDatabase(c *Config) error {
 		return fmt.Errorf("MESHBUG_DATABASE_URL is required")
 	}
 
-	c.AutoMigrate = envBool("MESHBUG_AUTO_MIGRATE", true)
+	c.IngestDatabaseURL = os.Getenv("MESHBUG_INGEST_DATABASE_URL")
+	if c.IngestDatabaseURL == "" {
+		c.IngestDatabaseURL = c.DatabaseURL
+	}
 
 	return nil
 }
@@ -154,17 +179,6 @@ func envDefault(k, d string) string {
 		return v
 	}
 	return d
-}
-
-func envBool(k string, d bool) bool {
-	switch strings.ToLower(os.Getenv(k)) {
-	case "1", "true", "yes", "on":
-		return true
-	case "0", "false", "no", "off":
-		return false
-	default:
-		return d
-	}
 }
 
 func parseLevel(s string) slog.Level {

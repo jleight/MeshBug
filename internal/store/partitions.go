@@ -9,18 +9,22 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// partitionedTables maps a parent table name to the prefix used for its
-// monthly partitions. New entries are picked up by EnsurePartitions.
-var partitionedTables = []string{
-	"packet_observations",
-	"raw_events",
-}
-
-// EnsurePartitions makes sure monthly partitions for `now` and the next month
-// exist on every partitioned table. Safe to call repeatedly.
-func (s *Store) EnsurePartitions(ctx context.Context, now time.Time) error {
+// EnsurePartitions makes sure monthly partitions for `now` and the next
+// month exist on every named table. Safe to call repeatedly.
+//
+// Each Store owns its own `_partition_state` (resolved via search_path), so
+// the ingest and project services maintain their partitions independently
+// without coordinating. Pass only tables that live in this store's schema:
+//
+//	ingest store  → ["raw_events"]
+//	project store → ["packet_observations"]
+func (s *Store) EnsurePartitions(
+	ctx context.Context,
+	now time.Time,
+	tables ...string,
+) error {
 	for _, month := range []time.Time{now, now.AddDate(0, 1, 0)} {
-		for _, table := range partitionedTables {
+		for _, table := range tables {
 			if err := s.ensurePartition(ctx, table, month); err != nil {
 				return err
 			}
@@ -63,10 +67,10 @@ func (s *Store) ensurePartition(
 	)
 
 	if _, err := s.Pool.Exec(ctx, ddl); err != nil {
-		// 42P07 (duplicate_table) can fire under concurrent startup of ingest +
-		// project even with CREATE TABLE IF NOT EXISTS, because partition
-		// creation isn't atomic with the existence check. Both branches do the
-		// same thing — the second one just records state and proceeds.
+		// 42P07 (duplicate_table) can still fire under racing partition
+		// creations within the same service (e.g. the startup ensure and
+		// the daily maintainer overlapping). Either branch lands the
+		// partition; the second one just records state and proceeds.
 		if pgErr, ok := errors.AsType[*pgconn.PgError](err); !ok || pgErr.Code != "42P07" {
 			return fmt.Errorf("create partition %s: %w", name, err)
 		}

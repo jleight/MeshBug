@@ -34,11 +34,7 @@ spec:
               value: ":8080"
             - name: MESHBUG_LOG_LEVEL
               value: {{ .Values.logLevel | quote }}
-            - name: MESHBUG_DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.postgres.existingSecret }}
-                  key: {{ .Values.postgres.existingSecretKey }}
+            {{- include "meshbug.databaseEnv" . | nindent 12 }}
           readinessProbe:
             httpGet: { path: /readyz, port: http }
             initialDelaySeconds: 3

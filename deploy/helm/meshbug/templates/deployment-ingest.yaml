@@ -31,13 +31,7 @@ spec:
           env:
             - name: MESHBUG_LOG_LEVEL
               value: {{ .Values.logLevel | quote }}
-            - name: MESHBUG_AUTO_MIGRATE
-              value: {{ .Values.ingest.autoMigrate | quote }}
-            - name: MESHBUG_DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.postgres.existingSecret }}
-                  key: {{ .Values.postgres.existingSecretKey }}
+            {{- include "meshbug.databaseEnv" . | nindent 12 }}
             - name: MESHBUG_BROKERS_CONFIG
               value: /etc/meshbug/brokers.json
             {{- range $b := .Values.brokers }}

@@ -7,7 +7,6 @@ helm = "latest"
 
 [env]
 MESHBUG_HTTP_ADDR = ":8080"
-MESHBUG_AUTO_MIGRATE = "true"
 MESHBUG_LOG_LEVEL = "info"
 
 [tasks.generate]
@@ -67,16 +66,15 @@ depends = ["fetch-assets", "generate"]
 run = "exec go run ./cmd/meshbug web"
 
 [tasks."migrate-up"]
-description = "Apply database migrations (all scopes: common, ingest, project)"
+description = "Apply database migrations"
 depends = ["generate"]
-run = "exec go run ./cmd/meshbug migrate all"
+run = "exec go run ./cmd/meshbug migrate"
 
 [tasks."migrate-new"]
-description = "Create a new migration. Usage: mise run migrate-new -- <scope> <name>"
+description = "Create a new migration. Usage: mise run migrate-new -- <name>"
 run = '''
-scope="${1:?scope required (common|ingest|project)}"
-name="${2:?name required}"
-migrate create -ext sql -dir "internal/store/migrations/${scope}" -seq "$name"
+name="${1:?name required}"
+migrate create -ext sql -dir "internal/store/migrations" -seq "$name"
 '''
 
 [tasks.psql]

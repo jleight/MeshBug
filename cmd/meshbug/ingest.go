@@ -32,23 +32,6 @@ func runIngest(_ []string) {
 	log := slog.New(handler)
 	slog.SetDefault(log)
 
-	if cfg.AutoMigrate {
-		log.Info(
-			"running migrations",
-			"scopes",
-			[]store.Scope{store.ScopeCommon, store.ScopeIngest},
-		)
-
-		err = store.RunMigrations(
-			cfg.DatabaseURL,
-			store.ScopeCommon,
-			store.ScopeIngest,
-		)
-		if err != nil {
-			fail("migrate", err)
-		}
-	}
-
 	ctx, cancel := signal.NotifyContext(
 		context.Background(),
 		os.Interrupt,
@@ -56,13 +39,29 @@ func runIngest(_ []string) {
 	)
 	defer cancel()
 
-	st, err := store.New(ctx, cfg.DatabaseURL)
+	err = store.CheckMigrations(
+		ctx,
+		cfg.IngestDatabaseURL,
+		cfg.DatabaseURL,
+	)
+	if err != nil {
+		fail("migrate-check", err)
+	}
+
+	st, err := store.NewIngest(
+		ctx,
+		cfg.IngestDatabaseURL,
+	)
 	if err != nil {
 		fail("store", err)
 	}
 	defer st.Close()
 
-	err = st.EnsurePartitions(ctx, time.Now().UTC())
+	err = st.EnsurePartitions(
+		ctx,
+		time.Now().UTC(),
+		"raw_events",
+	)
 	if err != nil {
 		fail("partitions", err)
 	}

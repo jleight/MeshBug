@@ -29,15 +29,26 @@ const (
 	batchSize     = 500
 )
 
+// Projector consumes events from `events` (the ingest schema, possibly in a
+// different database) and writes derived rows into `projections` (the
+// project schema). The two stores can point at the same database or at
+// different ones; the split lets local dev replay against a prod read
+// replica while writing projections to a local container.
 type Projector struct {
-	store *store.Store
-	log   *slog.Logger
+	events      *store.Store
+	projections *store.Store
+	log         *slog.Logger
 }
 
-func New(s *store.Store, log *slog.Logger) *Projector {
+func New(
+	events *store.Store,
+	projections *store.Store,
+	log *slog.Logger,
+) *Projector {
 	return &Projector{
-		store: s,
-		log:   log,
+		events:      events,
+		projections: projections,
+		log:         log,
 	}
 }
 
@@ -45,14 +56,17 @@ func New(s *store.Store, log *slog.Logger) *Projector {
 // to Run will rebuild derived state from raw_events.
 func (p *Projector) Reset(ctx context.Context) error {
 	p.log.Warn("resetting derived state — will rebuild from raw_events on next run")
-	return p.store.ResetDerivedState(ctx, projectorName)
+	return p.projections.ResetDerivedState(ctx, projectorName)
 }
 
 // Run processes events until ctx is canceled. Catches up from the last
-// committed cursor first, then listens for pg_notify('meshbug_raw') and
-// processes new batches as they arrive.
-func (p *Projector) Run(ctx context.Context, databaseURL string) error {
-	cursor, err := p.store.LoadProjectorCursor(ctx, projectorName)
+// committed cursor first, then listens for pg_notify('meshbug_raw') on the
+// events database and processes new batches as they arrive.
+//
+// eventsURL is the connection string used for the dedicated LISTEN session;
+// it must point at the same database `events` was opened against.
+func (p *Projector) Run(ctx context.Context, eventsURL string) error {
+	cursor, err := p.projections.LoadProjectorCursor(ctx, projectorName)
 	if err != nil {
 		return err
 	}
@@ -78,7 +92,7 @@ func (p *Projector) Run(ctx context.Context, databaseURL string) error {
 			}
 		}
 
-		errs <- notify.Listen(ctx, databaseURL, channels, p.log, handle)
+		errs <- notify.Listen(ctx, eventsURL, channels, p.log, handle)
 	}()
 
 	select {
@@ -91,7 +105,7 @@ func (p *Projector) Run(ctx context.Context, databaseURL string) error {
 
 func (p *Projector) catchUp(ctx context.Context, cursor *int64) error {
 	for {
-		events, err := p.store.FetchRawEventsAfter(ctx, *cursor, batchSize)
+		events, err := p.events.FetchRawEventsAfter(ctx, *cursor, batchSize)
 		if err != nil {
 			return err
 		}
@@ -130,7 +144,7 @@ func (p *Projector) catchUp(ctx context.Context, cursor *int64) error {
 		}
 
 		if len(packets) > 0 {
-			if _, err := p.store.InsertPacketBatch(ctx, packets); err != nil {
+			if _, err := p.projections.InsertPacketBatch(ctx, packets); err != nil {
 				p.log.Error(
 					"packet batch write failed",
 					"n",
@@ -149,7 +163,7 @@ func (p *Projector) catchUp(ctx context.Context, cursor *int64) error {
 
 			_ = notify.Publish(
 				ctx,
-				p.store.Pool,
+				p.projections.Pool,
 				notify.ChannelPackets,
 				map[string]any{
 					"count":     len(packets),
@@ -161,7 +175,7 @@ func (p *Projector) catchUp(ctx context.Context, cursor *int64) error {
 		for k := range statusAffected {
 			_ = notify.Publish(
 				ctx,
-				p.store.Pool,
+				p.projections.Pool,
 				notify.ChannelStatus,
 				map[string]any{
 					"observer_id": hex.EncodeToString([]byte(k)),
@@ -169,7 +183,7 @@ func (p *Projector) catchUp(ctx context.Context, cursor *int64) error {
 			)
 		}
 
-		if err := p.store.SaveProjectorCursor(ctx, projectorName, highest); err != nil {
+		if err := p.projections.SaveProjectorCursor(ctx, projectorName, highest); err != nil {
 			return err
 		}
 
@@ -223,7 +237,7 @@ func (p *Projector) applyStatus(
 		RadioCR:         cr,
 		Seen:            e.ReceivedAt,
 	}
-	if err := p.store.UpsertObserver(ctx, up); err != nil {
+	if err := p.projections.UpsertObserver(ctx, up); err != nil {
 		p.log.Error("upsert observer failed", "err", err)
 		return err
 	}
@@ -243,7 +257,7 @@ func (p *Projector) applyStatus(
 		LastSNR:    m.Stats.LastSNR,
 		DebugFlags: m.Stats.DebugFlags,
 	}
-	return p.store.InsertStatus(ctx, row)
+	return p.projections.InsertStatus(ctx, row)
 }
 
 func pickErrors(a, b *int64) *int64 {

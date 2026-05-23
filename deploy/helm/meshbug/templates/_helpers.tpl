@@ -30,3 +30,23 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- default "default" .Values.serviceAccount.name -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Database env vars: MESHBUG_DATABASE_URL is always set from postgres.existingSecret.
+MESHBUG_INGEST_DATABASE_URL is only set when postgres.ingestExistingSecret is
+configured; otherwise the app falls back to MESHBUG_DATABASE_URL.
+*/}}
+{{- define "meshbug.databaseEnv" -}}
+- name: MESHBUG_DATABASE_URL
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.postgres.existingSecret }}
+      key: {{ .Values.postgres.existingSecretKey }}
+{{- if .Values.postgres.ingestExistingSecret }}
+- name: MESHBUG_INGEST_DATABASE_URL
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.postgres.ingestExistingSecret }}
+      key: {{ .Values.postgres.ingestExistingSecretKey }}
+{{- end }}
+{{- end -}}

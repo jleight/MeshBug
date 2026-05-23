@@ -40,7 +40,16 @@ func runWeb(_ []string) {
 	)
 	defer cancel()
 
-	st, err := store.New(ctx, cfg.DatabaseURL)
+	err = store.CheckMigrations(
+		ctx,
+		cfg.IngestDatabaseURL,
+		cfg.DatabaseURL,
+	)
+	if err != nil {
+		fail("migrate-check", err)
+	}
+
+	st, err := store.NewProject(ctx, cfg.DatabaseURL)
 	if err != nil {
 		fail("store", err)
 	}

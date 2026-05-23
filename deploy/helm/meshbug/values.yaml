@@ -6,9 +6,18 @@ image:
 logLevel: info
 
 postgres:
-  # Secret you create out-of-band; key must contain a full DSN.
+  # Secret you create out-of-band; key must contain a full DSN. Owns the
+  # `project` and `web` schemas (derived state, future web tables).
   existingSecret: meshbug-postgres
   existingSecretKey: dsn
+
+  # Optional: a separate DSN for the `ingest` schema (raw_events). When unset
+  # the app falls back to the main DSN above, which is the common case.
+  # Override this when you want to point ingest at a different database —
+  # for example, run projector + web against a local container while reading
+  # raw_events from a prod read-replica.
+  ingestExistingSecret: ""
+  ingestExistingSecretKey: ""
 
 # MQTT brokers used by the ingest deployment. Each entry references an
 # existingSecret containing username/password keys. The structural list is
@@ -24,10 +33,9 @@ postgres:
 #     passwordKey: password
 brokers: []
 
-# A Job that runs `meshbug migrate all` as a Helm pre-install/pre-upgrade hook.
-# With this enabled (the default), the ingest and project Deployments can keep
-# autoMigrate off — there's no race on startup, and rollbacks don't risk
-# applying migrations from a newer release.
+# A Job that runs `meshbug migrate` as a Helm pre-install/pre-upgrade hook.
+# Required: the ingest/project/web services CheckMigrations at startup and
+# refuse to run if the database isn't current.
 migrationHook:
   enabled: true
   backoffLimit: 3
@@ -38,7 +46,6 @@ migrationHook:
 
 ingest:
   replicaCount: 1
-  autoMigrate: false    # the migration hook handles it. Flip on if you skip the hook.
   resources:
     requests: { cpu: 50m, memory: 64Mi }
     limits:   { cpu: 250m, memory: 128Mi }
@@ -49,7 +56,6 @@ ingest:
 
 project:
   # Single replica only — cursor + rollup + anomaly workers assume one writer.
-  autoMigrate: false    # see migrationHook above
   resources:
     requests: { cpu: 100m, memory: 128Mi }
     limits:   { cpu: 1, memory: 512Mi }

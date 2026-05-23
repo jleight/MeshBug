@@ -102,7 +102,7 @@ mise run init-local       # scaffolds .mise/config.local.toml (gitignored)
 # locally as well.
 
 mise run pg-up            # ephemeral Postgres in Docker (skip if using a remote DB)
-mise run migrate-up       # applies all scopes (common, ingest, project)
+mise run migrate-up       # applies every embedded migration
 
 # In one terminal:
 mise run ingest           # MQTT → raw_events (no derivation)
@@ -204,7 +204,6 @@ All knobs are environment variables:
 | `MESHBUG_DATABASE_URL` | both    | Postgres DSN. Required. |
 | `MESHBUG_LOG_LEVEL`    | both    | `debug` / `info` / `warn` / `error`. Default `info`. |
 | `MESHBUG_HTTP_ADDR`    | web     | Listen address. Default `:8080`. |
-| `MESHBUG_AUTO_MIGRATE` | ingest  | Apply embedded migrations at startup. Default `true`. |
 | `MESHBUG_BROKERS_JSON` | ingest  | Inline JSON broker list — see `internal/config/config.go`. |
 | `MESHBUG_BROKERS_CONFIG` | ingest | Path to a JSON broker file (used by the Helm ConfigMap). |
 | `MESHBUG_BROKER_<NAME>_USERNAME` / `_PASSWORD` | ingest | Per-broker credentials, merged into the structural list at startup. |
