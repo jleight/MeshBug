@@ -82,6 +82,16 @@ func New(
 				BaselineMinPerMin: 1,
 				Severity:          "crit",
 			},
+			&stages.ReceptionGap{
+				RecentWindow:      time.Hour,
+				BaselineWindow:    24 * time.Hour,
+				MinSamples:        30,
+				BaselineMinPerMin: 0.5,
+				MaxRecentFraction: 0.3,
+				MinPeerFraction:   0.5,
+				MinPeers:          1,
+				Severity:          "warn",
+			},
 		),
 	}
 
