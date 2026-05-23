@@ -61,6 +61,25 @@ type RawEvent struct {
 	Payload    []byte
 }
 
+// MaxRawEventID returns the highest id currently in raw_events, or 0 when
+// the table is empty. Used by the projector to report catch-up progress.
+func (s *Store) MaxRawEventID(ctx context.Context) (int64, error) {
+	var id *int64
+
+	err := s.Pool.
+		QueryRow(ctx, `SELECT MAX(id) FROM raw_events`).
+		Scan(&id)
+	if err != nil {
+		return 0, err
+	}
+
+	if id == nil {
+		return 0, nil
+	}
+
+	return *id, nil
+}
+
 // FetchRawEventsAfter returns up to `limit` events with id > since, in id
 // order. Used by the projector to stream through history.
 func (s *Store) FetchRawEventsAfter(ctx context.Context, since int64, limit int) ([]RawEvent, error) {

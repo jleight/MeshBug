@@ -104,12 +104,37 @@ func (p *Projector) Run(ctx context.Context, eventsURL string) error {
 }
 
 func (p *Projector) catchUp(ctx context.Context, cursor *int64) error {
+	target, err := p.events.MaxRawEventID(ctx)
+	if err != nil {
+		return err
+	}
+
+	var (
+		startCursor = *cursor
+		batches     int
+		processed   int
+	)
+
 	for {
 		events, err := p.events.FetchRawEventsAfter(ctx, *cursor, batchSize)
 		if err != nil {
 			return err
 		}
+
 		if len(events) == 0 {
+			if processed > 0 {
+				p.log.Info(
+					"catch-up complete",
+					"processed",
+					processed,
+					"batches",
+					batches,
+					"start_cursor",
+					startCursor,
+					"end_cursor",
+					*cursor,
+				)
+			}
 			return nil
 		}
 
@@ -188,8 +213,45 @@ func (p *Projector) catchUp(ctx context.Context, cursor *int64) error {
 		}
 
 		*cursor = highest
+		batches++
+		processed += len(events)
+
+		remaining := target - *cursor
+		if remaining < 0 {
+			remaining = 0
+		}
+
+		// Log every batch when there's meaningful backlog to chew through, so a
+		// `--reset` rebuild has visible progress in the pod logs. For incremental
+		// catch-up triggered by LISTEN, this fires once per wake-up — also useful.
+		p.log.Info(
+			"catch-up batch",
+			"batch",
+			batches,
+			"events",
+			len(events),
+			"processed",
+			processed,
+			"cursor",
+			*cursor,
+			"remaining",
+			remaining,
+		)
 
 		if len(events) < batchSize {
+			if processed > 0 {
+				p.log.Info(
+					"catch-up complete",
+					"processed",
+					processed,
+					"batches",
+					batches,
+					"start_cursor",
+					startCursor,
+					"end_cursor",
+					*cursor,
+				)
+			}
 			return nil
 		}
 	}
