@@ -7,6 +7,12 @@ templ Layout(title string, activeNav string) {
 			<meta charset="utf-8"/>
 			<meta name="viewport" content="width=device-width, initial-scale=1"/>
 			<title>{ title } — MeshBug</title>
+			<link rel="icon" type="image/png" sizes="16x16" href="/static/meshbug/favicon-16.png"/>
+			<link rel="icon" type="image/png" sizes="32x32" href="/static/meshbug/favicon-32.png"/>
+			<link rel="icon" type="image/png" sizes="48x48" href="/static/meshbug/favicon-48.png"/>
+			<link rel="apple-touch-icon" sizes="180x180" href="/static/meshbug/apple-touch-icon.png"/>
+			<link rel="icon" type="image/png" sizes="192x192" href="/static/meshbug/android-chrome-192.png"/>
+			<link rel="icon" type="image/png" sizes="512x512" href="/static/meshbug/android-chrome-512.png"/>
 			<link rel="stylesheet" href="/static/tabler/tabler.min.css"/>
 			<link rel="stylesheet" href="/static/tabler/tabler-icons.min.css"/>
 			<link rel="stylesheet" href="/static/datastar/app.css"/>
@@ -33,10 +39,34 @@ templ Layout(title string, activeNav string) {
 }
 
 templ navbar(active string) {
-	<header class="navbar navbar-expand-md navbar-dark d-print-none">
+	<header class="navbar navbar-expand-md d-print-none">
 		<div class="container-xl">
-			<h1 class="navbar-brand"><a href="/">MeshBug</a></h1>
-			<div class="collapse navbar-collapse">
+			<button
+				class="navbar-toggler"
+				type="button"
+				data-bs-toggle="collapse"
+				data-bs-target="#navbar-menu"
+				aria-controls="navbar-menu"
+				aria-expanded="false"
+				aria-label="Toggle navigation"
+			>
+				<span class="navbar-toggler-icon"></span>
+			</button>
+			<h1 class="navbar-brand d-none-navbar-horizontal pe-0 pe-md-3">
+				<a href="/" class="d-flex align-items-center text-reset text-decoration-none">
+					<img
+						src="/static/meshbug/logo-32.png"
+						srcset="/static/meshbug/logo-32.png 1x, /static/meshbug/logo-64.png 2x"
+						width="32"
+						height="32"
+						alt="MeshBug"
+						class="me-2"
+					/>
+					MeshBug
+				</a>
+			</h1>
+			<div class="navbar-nav flex-row order-md-last"></div>
+			<div class="collapse navbar-collapse" id="navbar-menu">
 				<ul class="navbar-nav">
 					@navItem("/", "Overview", "dashboard", active)
 					@navItem("/observers", "Observers", "broadcast", active)
@@ -53,7 +83,7 @@ templ navbar(active string) {
 templ navItem(href, label, icon, active string) {
 	<li class={ "nav-item", templ.KV("active", href == active) }>
 		<a class="nav-link" href={ templ.SafeURL(href) }>
-			<span class="nav-link-icon"><i class={ "ti", "ti-" + icon }></i></span>
+			<span class="nav-link-icon d-md-none d-lg-inline-block"><i class={ "ti", "ti-" + icon }></i></span>
 			<span class="nav-link-title">{ label }</span>
 		</a>
 	</li>

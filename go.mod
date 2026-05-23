@@ -9,6 +9,7 @@ require (
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/meshcore-go/meshcore-go v1.0.6
+	golang.org/x/image v0.41.0
 )
 
 require (

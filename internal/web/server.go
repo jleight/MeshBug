@@ -20,6 +20,7 @@ type Server struct {
 	hub   *sse.Hub
 	log   *slog.Logger
 	mux   http.Handler
+	icons *IconSet
 }
 
 func NewServer(
@@ -27,14 +28,21 @@ func NewServer(
 	hub *sse.Hub,
 	log *slog.Logger,
 	staticFS fs.FS,
-) *Server {
+) (*Server, error) {
+	icons, err := BuildIcons(staticFS)
+	if err != nil {
+		return nil, err
+	}
+
 	srv := &Server{
 		store: s,
 		hub:   hub,
 		log:   log,
+		icons: icons,
 	}
 	srv.mux = srv.routes(staticFS)
-	return srv
+
+	return srv, nil
 }
 
 func (s *Server) Handler() http.Handler {
@@ -65,6 +73,9 @@ func (s *Server) routes(staticFS fs.FS) http.Handler {
 		}
 		w.WriteHeader(http.StatusOK)
 	})
+
+	r.Handle("/static/meshbug/*", s.icons.handler())
+	r.Get("/favicon.ico", s.icons.favicon)
 
 	r.Handle(
 		"/static/*",

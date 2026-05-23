@@ -77,9 +77,14 @@ func runWeb(_ []string) {
 		}
 	}()
 
+	webSrv, err := web.NewServer(st, hub, log, static.FS())
+	if err != nil {
+		fail("web server", err)
+	}
+
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           web.NewServer(st, hub, log, static.FS()).Handler(),
+		Handler:           webSrv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		WriteTimeout:      0,
 		IdleTimeout:       2 * time.Minute,
