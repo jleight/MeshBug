@@ -66,8 +66,9 @@ func TestUnmarshalPacket(t *testing.T) {
 }
 
 func TestUnmarshalPacketNumericFields(t *testing.T) {
-	// Some observers publish SNR/RSSI/score as JSON numbers rather than strings.
-	raw := []byte(`{"timestamp":"2026-05-22T11:38:03.342542","origin":"o","origin_id":"x","type":"PACKET","direction":"rx","len":42,"packet_type":"ADVERT","route":"F","payload_len":40,"raw":"abcd","SNR":-5.25,"RSSI":-95,"score":1000,"duration":0,"hash":"deadbeef"}`)
+	// Some observers publish all numeric fields — including packet_type — as
+	// JSON numbers rather than strings.
+	raw := []byte(`{"timestamp":"2026-05-22T11:38:03.342542","origin":"o","origin_id":"x","type":"PACKET","direction":"rx","len":42,"packet_type":0,"route":"F","payload_len":40,"raw":"abcd","SNR":-5.25,"RSSI":-95,"score":1000,"duration":0,"hash":"deadbeef","path":"F0 B7"}`)
 	m, err := unmarshalPacket(raw)
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -77,5 +78,11 @@ func TestUnmarshalPacketNumericFields(t *testing.T) {
 	}
 	if v := atofFlex(m.SNR); v == nil || *v != -5.25 {
 		t.Errorf("SNR = %v", v)
+	}
+	if string(m.PacketType) != "0" {
+		t.Errorf("PacketType = %q, want %q", m.PacketType, "0")
+	}
+	if m.Path != "F0 B7" {
+		t.Errorf("Path = %q, want %q", m.Path, "F0 B7")
 	}
 }
