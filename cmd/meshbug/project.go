@@ -13,14 +13,15 @@ import (
 	"github.com/jleight/meshbug/internal/anomaly"
 	"github.com/jleight/meshbug/internal/config"
 	"github.com/jleight/meshbug/internal/project"
-	"github.com/jleight/meshbug/internal/rollup"
 	"github.com/jleight/meshbug/internal/store"
 )
 
-// runProject derives state from ingest.raw_events: parses payloads, writes
-// observers / observer_status / packet_observations / packets_unique, and
-// runs the rollup and anomaly workers. `meshbug project --reset` truncates
-// derived state and rebuilds from raw_events on next run.
+// runProject derives state from ingest.raw_events: parses payloads and
+// feeds them through the project pipeline, which maintains every derived
+// table (observers, observer_status, packet_observations, packets_unique,
+// rollups). The anomaly worker runs alongside, reading the rollup tables.
+// `meshbug project --reset` truncates derived state and rebuilds from
+// raw_events on next run.
 //
 // The projector talks to two stores: an ingest store (reads raw_events,
 // LISTENs for new ones) and a project store (writes derived rows + fires
@@ -106,7 +107,6 @@ func runProject(args []string) {
 		}
 	}()
 
-	go rollup.New(projections, log).Run(ctx)
 	go anomaly.New(projections, log).Run(ctx)
 
 	// Daily partition maintainer — packet_observations lives in the

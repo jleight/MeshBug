@@ -1,26 +1,29 @@
-// Package project drives the read-model. It reads `raw_events`, decodes each
-// one (MQTT topic + JSON payload + MeshCore wire format), and writes the
-// derived rows that the UI queries: observers, observer_status,
-// packet_observations, packets_unique. It also publishes pg_notify on the
-// channels web subscribes to (meshbug_packets, meshbug_status), so SSE
-// streams update in near-real time.
+// Package project drives the read-model. It reads ingest.raw_events,
+// decodes each one (MQTT topic + JSON payload + MeshCore wire format),
+// and feeds the result into a pipeline of stages that maintain every
+// derived table in the `project` schema: observers, observer_status,
+// packet_observations, packets_unique, rollup_observer_1m,
+// rollup_observer_1h, rollup_neighbor_1m. Each batch's writes and the
+// cursor advance commit in a single transaction.
 //
-// Cursor: a row in projector_state tracks the highest raw_events.id we've
-// processed. On startup we resume from there; on each batch we advance the
-// cursor only after the derived inserts succeed.
+// Cursor: a row in projector_state tracks the highest raw_events.id
+// we've processed. On startup we resume from there; on `--reset` we
+// truncate every derived table, rewind to 0, and replay the full log.
+//
+// Pipeline shape: events flow through every stage. Adding a new
+// derivation = write a Stage, append it to the slice in New. See
+// internal/project/pipeline and internal/project/stages.
 package project
 
 import (
 	"context"
-	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"log/slog"
-	"strings"
 
 	"github.com/jleight/meshbug/internal/ingest"
-	"github.com/jleight/meshbug/internal/meshcore"
 	"github.com/jleight/meshbug/internal/notify"
+	"github.com/jleight/meshbug/internal/project/pipeline"
+	"github.com/jleight/meshbug/internal/project/stages"
 	"github.com/jleight/meshbug/internal/store"
 )
 
@@ -29,15 +32,19 @@ const (
 	batchSize     = 500
 )
 
-// Projector consumes events from `events` (the ingest schema, possibly in a
-// different database) and writes derived rows into `projections` (the
-// project schema). The two stores can point at the same database or at
-// different ones; the split lets local dev replay against a prod read
-// replica while writing projections to a local container.
+// Projector consumes events from `events` (the ingest schema, possibly
+// in a different database) and feeds them through a pipeline that
+// writes into `projections` (the project schema). The two stores can
+// point at the same database or at different ones; the split lets local
+// dev replay against a prod read replica while writing projections to
+// a local container.
 type Projector struct {
 	events      *store.Store
 	projections *store.Store
 	log         *slog.Logger
+
+	decoder  *decoder
+	pipeline *pipeline.Pipeline
 }
 
 func New(
@@ -45,25 +52,49 @@ func New(
 	projections *store.Store,
 	log *slog.Logger,
 ) *Projector {
+	// Order matters: stages that rehydrate by reading packet_observations
+	// must flush before PacketObservations writes the current batch's
+	// rows, so their rehydrate SELECT sees only historical state. The
+	// in-memory accumulator already has this batch's events.
+	stageList := []pipeline.Stage{
+		stages.NewObservers(),
+		stages.NewObserverStatus(),
+		stages.NewPacketsUnique(),
+		stages.NewRollupObserver1m(),
+		stages.NewRollupObserver1h(),
+		stages.NewRollupNeighbor1m(),
+		stages.NewPacketObservations(),
+	}
+
 	return &Projector{
 		events:      events,
 		projections: projections,
 		log:         log,
+		decoder:     newDecoder(log),
+		pipeline:    pipeline.New(projections.Pool, log, stageList...),
 	}
 }
 
-// Reset truncates every derived table and rewinds the cursor to 0. Next call
-// to Run will rebuild derived state from raw_events.
+// Reset truncates every derived table, rewinds the cursor to 0, and
+// clears every stage's in-memory state. The next Run call will rebuild
+// the entire project schema from raw_events.
 func (p *Projector) Reset(ctx context.Context) error {
 	p.log.Warn("resetting derived state — will rebuild from raw_events on next run")
-	return p.projections.ResetDerivedState(ctx, projectorName)
+
+	err := p.projections.ResetDerivedState(ctx, projectorName)
+	if err != nil {
+		return err
+	}
+
+	p.pipeline.Clear()
+	return nil
 }
 
 // Run processes events until ctx is canceled. Catches up from the last
-// committed cursor first, then listens for pg_notify('meshbug_raw') on the
-// events database and processes new batches as they arrive.
+// committed cursor first, then listens for pg_notify('meshbug_raw') on
+// the events database and processes new batches as they arrive.
 //
-// eventsURL is the connection string used for the dedicated LISTEN session;
+// eventsURL is the connection string for the dedicated LISTEN session;
 // it must point at the same database `events` was opened against.
 func (p *Projector) Run(ctx context.Context, eventsURL string) error {
 	cursor, err := p.projections.LoadProjectorCursor(ctx, projectorName)
@@ -73,15 +104,13 @@ func (p *Projector) Run(ctx context.Context, eventsURL string) error {
 
 	p.log.Info("project starting", "cursor", cursor)
 
-	// Drain anything queued before we start listening.
-	if err := p.catchUp(ctx, &cursor); err != nil && !errors.Is(err, context.Canceled) {
+	err = p.catchUp(ctx, &cursor)
+	if err != nil && !errors.Is(err, context.Canceled) {
 		p.log.Error("initial catch-up failed", "err", err)
 	}
 
-	// Stream new events as ingest writes them. The listener is best-effort —
-	// if it falls behind or disconnects, the catch-up loop on next wake
-	// closes the gap.
 	errs := make(chan error, 1)
+
 	go func() {
 		channels := []string{ingest.NotifyChannel}
 
@@ -116,12 +145,12 @@ func (p *Projector) catchUp(ctx context.Context, cursor *int64) error {
 	)
 
 	for {
-		events, err := p.events.FetchRawEventsAfter(ctx, *cursor, batchSize)
+		raw, err := p.events.FetchRawEventsAfter(ctx, *cursor, batchSize)
 		if err != nil {
 			return err
 		}
 
-		if len(events) == 0 {
+		if len(raw) == 0 {
 			if processed > 0 {
 				p.log.Info(
 					"catch-up complete",
@@ -138,98 +167,40 @@ func (p *Projector) catchUp(ctx context.Context, cursor *int64) error {
 			return nil
 		}
 
-		highest := *cursor
-		obsAffected := map[string]struct{}{}
-		statusAffected := map[string]struct{}{}
+		events := make([]pipeline.Event, 0, len(raw))
+		var highest int64
 
-		var packets []store.PacketRow
+		for _, r := range raw {
+			highest = r.ID
 
-		for _, e := range events {
-			obs, kind, err := decodeTopic(e.Topic)
-			if err != nil {
-				highest = e.ID
+			e, ok := p.decoder.Decode(r)
+			if !ok {
 				continue
 			}
 
-			switch kind {
-			case "status":
-				if err := p.applyStatus(ctx, e, obs); err == nil {
-					statusAffected[string(obs)] = struct{}{}
-				}
-
-			case "packets":
-				row, ok := p.decodePacket(e, obs)
-				if ok {
-					packets = append(packets, row)
-					obsAffected[string(obs)] = struct{}{}
-				}
-			}
-
-			highest = e.ID
+			events = append(events, e)
 		}
 
-		if len(packets) > 0 {
-			if _, err := p.projections.InsertPacketBatch(ctx, packets); err != nil {
-				p.log.Error(
-					"packet batch write failed",
-					"n",
-					len(packets),
-					"err",
-					err,
-				)
-				// Don't advance the cursor on a derived-write failure — we'll retry.
-				return err
-			}
-
-			ids := make([]string, 0, len(obsAffected))
-			for k := range obsAffected {
-				ids = append(ids, hex.EncodeToString([]byte(k)))
-			}
-
-			_ = notify.Publish(
-				ctx,
-				p.projections.Pool,
-				notify.ChannelPackets,
-				map[string]any{
-					"count":     len(packets),
-					"observers": ids,
-				},
-			)
-		}
-
-		for k := range statusAffected {
-			_ = notify.Publish(
-				ctx,
-				p.projections.Pool,
-				notify.ChannelStatus,
-				map[string]any{
-					"observer_id": hex.EncodeToString([]byte(k)),
-				},
-			)
-		}
-
-		if err := p.projections.SaveProjectorCursor(ctx, projectorName, highest); err != nil {
+		err = p.pipeline.ProcessBatch(ctx, events, projectorName, highest)
+		if err != nil {
 			return err
 		}
 
 		*cursor = highest
 		batches++
-		processed += len(events)
+		processed += len(raw)
 
 		remaining := target - *cursor
 		if remaining < 0 {
 			remaining = 0
 		}
 
-		// Log every batch when there's meaningful backlog to chew through, so a
-		// `--reset` rebuild has visible progress in the pod logs. For incremental
-		// catch-up triggered by LISTEN, this fires once per wake-up — also useful.
 		p.log.Info(
 			"catch-up batch",
 			"batch",
 			batches,
 			"events",
-			len(events),
+			len(raw),
 			"processed",
 			processed,
 			"cursor",
@@ -238,7 +209,7 @@ func (p *Projector) catchUp(ctx context.Context, cursor *int64) error {
 			remaining,
 		)
 
-		if len(events) < batchSize {
+		if len(raw) < batchSize {
 			if processed > 0 {
 				p.log.Info(
 					"catch-up complete",
@@ -255,165 +226,4 @@ func (p *Projector) catchUp(ctx context.Context, cursor *int64) error {
 			return nil
 		}
 	}
-}
-
-func decodeTopic(topic string) (obsID []byte, kind string, err error) {
-	// The wire prefix is always "meshcore/" — observers we ingest are matched
-	// against the broker's TopicPrefix at subscribe time, so by the time we
-	// see the topic here it's guaranteed to start with "meshcore/".
-	id, _, k, err := parseTopicHash("meshcore/", topic)
-	return id, k, err
-}
-
-func (p *Projector) applyStatus(
-	ctx context.Context,
-	e store.RawEvent,
-	obsID []byte,
-) error {
-	m, err := unmarshalStatus(e.Payload)
-	if err != nil {
-		p.log.Warn(
-			"bad status json",
-			"id",
-			e.ID,
-			"err",
-			err,
-		)
-		return err
-	}
-
-	region := topicRegion(e.Topic)
-	freq, bw, sf, cr := parseRadio(m.Radio)
-
-	up := store.ObserverUpsert{
-		ID:              obsID,
-		OriginName:      m.Origin,
-		Region:          region,
-		Model:           m.Model,
-		FirmwareVersion: m.FirmwareVersion,
-		ClientVersion:   m.ClientVersion,
-		Source:          m.Source,
-		RadioFreqKHz:    freq,
-		RadioBWKHz:      bw,
-		RadioSF:         sf,
-		RadioCR:         cr,
-		Seen:            e.ReceivedAt,
-	}
-	if err := p.projections.UpsertObserver(ctx, up); err != nil {
-		p.log.Error("upsert observer failed", "err", err)
-		return err
-	}
-
-	row := store.StatusRow{
-		ObserverID: obsID,
-		TS:         e.ReceivedAt,
-		Status:     m.Status,
-		UptimeSecs: m.Stats.UptimeSecs,
-		BatteryMV:  m.Stats.BatteryMV,
-		QueueLen:   m.Stats.QueueLen,
-		NoiseFloor: m.Stats.NoiseFloor,
-		TxAirSecs:  m.Stats.TxAirSecs,
-		RxAirSecs:  m.Stats.RxAirSecs,
-		RecvErrors: pickErrors(m.Stats.RecvErrors, m.Stats.Errors),
-		LastRSSI:   m.Stats.LastRSSI,
-		LastSNR:    m.Stats.LastSNR,
-		DebugFlags: m.Stats.DebugFlags,
-	}
-	return p.projections.InsertStatus(ctx, row)
-}
-
-func pickErrors(a, b *int64) *int64 {
-	if a != nil {
-		return a
-	}
-	return b
-}
-
-func topicRegion(topic string) string {
-	parts := strings.Split(strings.TrimPrefix(topic, "meshcore/"), "/")
-	if len(parts) >= 1 {
-		return parts[0]
-	}
-	return ""
-}
-
-func (p *Projector) decodePacket(
-	e store.RawEvent,
-	obsID []byte,
-) (store.PacketRow, bool) {
-	m, err := unmarshalPacket(e.Payload)
-	if err != nil {
-		p.log.Warn(
-			"bad packet json",
-			"id",
-			e.ID,
-			"err",
-			err,
-		)
-		return store.PacketRow{}, false
-	}
-
-	var rawBytes []byte
-	if m.Raw != "" {
-		rawBytes, _ = hex.DecodeString(strings.TrimSpace(m.Raw))
-	}
-
-	var packetHash []byte
-	if m.Hash != "" {
-		packetHash, _ = hex.DecodeString(strings.TrimSpace(m.Hash))
-	}
-
-	row := store.PacketRow{
-		TS:         e.ReceivedAt,
-		ObserverID: obsID,
-		PacketHash: packetHash,
-		Direction:  m.Direction,
-		PacketType: string(m.PacketType),
-		Route:      m.Route,
-		Len:        atoiFlex(m.Len),
-		PayloadLen: atoiFlex(m.PayloadLen),
-		RSSI:       atoiFlex(m.RSSI),
-		SNR:        atofFlex(m.SNR),
-		Score:      atoiFlex(m.Score),
-		DurationMS: atoiFlex(m.Duration),
-		Raw:        rawBytes,
-	}
-
-	if len(rawBytes) == 0 {
-		return row, true
-	}
-
-	pkt, err := meshcore.Parse(rawBytes)
-	switch {
-	case err == nil:
-		t := int16(pkt.PayloadType())
-		row.DecodedType = &t
-		row.SourcePrefix = meshcore.NeighborSource(pkt)
-		row.DestPrefix = meshcore.PayloadDstHash(pkt)
-		if pkt.IsTransport() {
-			row.TransportCodes = make([]byte, 4)
-			binary.LittleEndian.PutUint16(row.TransportCodes[0:2], pkt.TransportCode1)
-			binary.LittleEndian.PutUint16(row.TransportCodes[2:4], pkt.TransportCode2)
-		}
-		if row.Route == "" {
-			row.Route = pkt.RouteTypeString()
-		}
-		if row.PacketType == "" {
-			row.PacketType = pkt.PayloadTypeString()
-		}
-
-	case errors.Is(err, meshcore.ErrDoNotRetransmit):
-		// keep the observation, no decoded fields
-
-	default:
-		p.log.Debug(
-			"decode failed",
-			"id",
-			e.ID,
-			"err",
-			err,
-		)
-	}
-
-	return row, true
 }
