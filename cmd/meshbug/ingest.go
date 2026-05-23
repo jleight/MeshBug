@@ -62,10 +62,8 @@ func runIngest(_ []string) {
 	}
 	defer st.Close()
 
-	// raw_events is partitioned monthly — make sure the current and next
-	// month's partition exist (the project service also calls this, but ingest
-	// might come up first on a fresh install).
-	if err := st.EnsurePartitions(ctx, time.Now().UTC()); err != nil {
+	err = st.EnsurePartitions(ctx, time.Now().UTC())
+	if err != nil {
 		fail("partitions", err)
 	}
 

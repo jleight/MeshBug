@@ -9,13 +9,15 @@ import (
 
 // RawEventInput is one MQTT message captured by the ingest service.
 type RawEventInput struct {
-	Broker  string
-	Topic   string
-	Payload []byte
+	Broker     string
+	Topic      string
+	Payload    []byte
+	ReceivedAt time.Time
 }
 
 // InsertRawEvents appends events to the raw_events log via CopyFrom. The
-// sequence-assigned id and received_at default are filled by Postgres.
+// sequence-assigned id is filled by us; ReceivedAt is the moment the MQTT
+// client callback fired for this message.
 func (s *Store) InsertRawEvents(ctx context.Context, msgs []RawEventInput) (int64, error) {
 	if len(msgs) == 0 {
 		return 0, nil
@@ -34,12 +36,11 @@ func (s *Store) InsertRawEvents(ctx context.Context, msgs []RawEventInput) (int6
 		return 0, err
 	}
 
-	now := time.Now().UTC()
 	src := pgx.CopyFromSlice(
 		len(msgs),
 		func(i int) ([]any, error) {
 			m := msgs[i]
-			return []any{ids[i], now, m.Broker, m.Topic, m.Payload}, nil
+			return []any{ids[i], m.ReceivedAt, m.Broker, m.Topic, m.Payload}, nil
 		},
 	)
 

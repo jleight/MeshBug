@@ -17,9 +17,10 @@ import (
 
 // Message is one delivered MQTT message annotated with the broker it came from.
 type Message struct {
-	Broker  string
-	Topic   string
-	Payload []byte
+	Broker     string
+	Topic      string
+	Payload    []byte
+	ReceivedAt time.Time
 }
 
 // Manager owns one paho client per broker.
@@ -86,11 +87,14 @@ func (m *Manager) Start(ctx context.Context) error {
 					topic,
 					0,
 					func(_ paho.Client, msg paho.Message) {
+						received := time.Now().UTC()
+
 						select {
 						case m.out <- Message{
-							Broker:  b.Name,
-							Topic:   msg.Topic(),
-							Payload: msg.Payload(),
+							Broker:     b.Name,
+							Topic:      msg.Topic(),
+							Payload:    msg.Payload(),
+							ReceivedAt: received,
 						}:
 						case <-ctx.Done():
 						}

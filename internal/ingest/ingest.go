@@ -53,17 +53,16 @@ func (i *Ingester) Run(ctx context.Context) error {
 		}
 
 		input := make([]store.RawEventInput, len(batch))
-
 		for i, m := range batch {
 			input[i] = store.RawEventInput{
-				Broker:  m.Broker,
-				Topic:   m.Topic,
-				Payload: m.Payload,
+				Broker:     m.Broker,
+				Topic:      m.Topic,
+				Payload:    m.Payload,
+				ReceivedAt: m.ReceivedAt,
 			}
 		}
 
 		n, err := i.store.InsertRawEvents(ctx, input)
-
 		if err != nil {
 			i.log.Error(
 				"raw_events write failed",
