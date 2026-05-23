@@ -11,28 +11,26 @@ import (
 	"github.com/jleight/meshbug/internal/config"
 	"github.com/jleight/meshbug/internal/meshcore"
 	"github.com/jleight/meshbug/internal/mqtt"
-	"github.com/jleight/meshbug/internal/sse"
+	"github.com/jleight/meshbug/internal/notify"
 	"github.com/jleight/meshbug/internal/store"
 )
 
 // Ingester consumes MQTT messages, parses them, decodes packet headers, and
-// writes them to the store in batches. After writes, it publishes lightweight
-// summaries to the SSE hub for live UI updates.
+// writes them to the store in batches. After each commit, it fires a small
+// pg_notify summary so the web service's listener can re-render SSE topics.
 type Ingester struct {
 	cfg        []config.Broker
 	store      *store.Store
-	hub        *sse.Hub
 	in         <-chan mqtt.Message
 	log        *slog.Logger
 	batchSize  int
 	flushEvery time.Duration
 }
 
-func New(brokers []config.Broker, s *store.Store, hub *sse.Hub, in <-chan mqtt.Message, log *slog.Logger) *Ingester {
+func New(brokers []config.Broker, s *store.Store, in <-chan mqtt.Message, log *slog.Logger) *Ingester {
 	return &Ingester{
 		cfg:        brokers,
 		store:      s,
-		hub:        hub,
 		in:         in,
 		log:        log,
 		batchSize:  500,
@@ -60,11 +58,21 @@ func (i *Ingester) Run(ctx context.Context) error {
 		if _, err := i.store.InsertPacketBatch(ctx, batch); err != nil {
 			i.log.Error("packet batch write failed", "err", err, "n", len(batch))
 		} else {
+			// One notify per batch — listeners debounce + re-query. Tiny payload.
+			affected := make(map[string]struct{}, len(batch))
 			for _, r := range batch {
-				i.hub.Publish(sse.Event{Topic: "live-feed", Payload: r})
-				i.hub.Publish(sse.Event{Topic: "observer:" + hex.EncodeToString(r.ObserverID), Payload: r})
+				affected[string(r.ObserverID)] = struct{}{}
 			}
-			i.hub.Publish(sse.Event{Topic: "overview", Payload: len(batch)})
+			observers := make([]string, 0, len(affected))
+			for id := range affected {
+				observers = append(observers, hexEncode([]byte(id)))
+			}
+			if err := notify.Publish(ctx, i.store.Pool, notify.ChannelPackets, map[string]any{
+				"count":     len(batch),
+				"observers": observers,
+			}); err != nil {
+				i.log.Warn("notify publish failed", "channel", notify.ChannelPackets, "err", err)
+			}
 		}
 		batch = batch[:0]
 	}
@@ -156,8 +164,21 @@ func (i *Ingester) handleStatus(ctx context.Context, msg mqtt.Message, obsID []b
 		i.log.Error("insert status failed", "err", err)
 		return
 	}
-	i.hub.Publish(sse.Event{Topic: "observer:" + hex.EncodeToString(obsID), Payload: row})
-	i.hub.Publish(sse.Event{Topic: "overview", Payload: "status"})
+	if err := notify.Publish(ctx, i.store.Pool, notify.ChannelStatus, map[string]any{
+		"observer_id": hexEncode(obsID),
+	}); err != nil {
+		i.log.Warn("notify publish failed", "channel", notify.ChannelStatus, "err", err)
+	}
+}
+
+func hexEncode(b []byte) string {
+	const hex = "0123456789abcdef"
+	out := make([]byte, len(b)*2)
+	for i, c := range b {
+		out[i*2] = hex[c>>4]
+		out[i*2+1] = hex[c&0x0F]
+	}
+	return string(out)
 }
 
 func pickErrors(a, b *int64) *int64 {

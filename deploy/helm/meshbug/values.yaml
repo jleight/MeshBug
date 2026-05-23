@@ -3,23 +3,17 @@ image:
   tag: ""           # defaults to .Chart.AppVersion
   pullPolicy: IfNotPresent
 
-# Single replica: the rollup workers assume one writer and partition maintenance
-# is once-per-instance. Scale by sharding observers across instances later if needed.
-replicaCount: 1
+logLevel: info
 
 postgres:
-  # The Secret you create out-of-band; key must contain the full Postgres DSN.
+  # Secret you create out-of-band; key must contain a full DSN.
   existingSecret: meshbug-postgres
   existingSecretKey: dsn
 
-env:
-  MESHBUG_HTTP_ADDR: ":8080"
-  MESHBUG_AUTO_MIGRATE: "true"
-  MESHBUG_LOG_LEVEL: "info"
-
-# Brokers are listed here. Each entry's password (and optionally username)
-# comes from an existingSecret + key. The app composes MESHBUG_BROKERS_JSON
-# from these at startup.
+# MQTT brokers used by the ingest deployment. Each entry references an
+# existingSecret containing username/password keys. The structural list is
+# rendered into a ConfigMap; credentials are injected as env vars from the
+# Secret and merged at startup by the ingest binary.
 #
 # brokers:
 #   - name: home
@@ -30,29 +24,36 @@ env:
 #     passwordKey: password
 brokers: []
 
+ingest:
+  autoMigrate: true     # ingest runs the migrations (it owns the schema)
+  resources:
+    requests: { cpu: 50m, memory: 96Mi }
+    limits:   { cpu: 500m, memory: 256Mi }
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+web:
+  replicaCount: 1
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits:   { cpu: 500m, memory: 256Mi }
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+service:
+  type: ClusterIP
+  port: 80
+
 ingress:
   enabled: true
   className: ""
   host: meshbug.local
   tls: false
   annotations: {}
-
-service:
-  type: ClusterIP
-  port: 80
-
-resources:
-  requests:
-    cpu: 100m
-    memory: 128Mi
-  limits:
-    cpu: "1"
-    memory: 512Mi
-
-podAnnotations: {}
-nodeSelector: {}
-tolerations: []
-affinity: {}
 
 serviceAccount:
   create: true

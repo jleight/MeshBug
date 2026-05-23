@@ -3,111 +3,56 @@
 // Copyright (c) 2026 Jonathon Leight.
 // Licensed under the Elastic License 2.0; see the LICENSE file in the repo
 // root.
+//
+// One binary, two subcommands:
+//
+//	meshbug ingest   — subscribe to MQTT brokers, write to Postgres,
+//	                   run rollup + anomaly workers, fire pg_notify on writes.
+//	meshbug web      — serve the dashboard UI, listen for pg_notify, push
+//	                   SSE updates to connected browsers.
+//
+// They share the same /internal packages and the same Postgres database. Run
+// them as separate Deployments (ingest in your cluster, web wherever) and the
+// only thing they exchange is rows + LISTEN/NOTIFY traffic.
 
 package main
 
 import (
-	"context"
-	"errors"
+	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
-	"os/signal"
-	"syscall"
-	"time"
-
-	"github.com/jleight/meshbug/internal/anomaly"
-	"github.com/jleight/meshbug/internal/config"
-	"github.com/jleight/meshbug/internal/ingest"
-	"github.com/jleight/meshbug/internal/mqtt"
-	"github.com/jleight/meshbug/internal/rollup"
-	"github.com/jleight/meshbug/internal/sse"
-	"github.com/jleight/meshbug/internal/store"
-	"github.com/jleight/meshbug/internal/web"
-	"github.com/jleight/meshbug/internal/web/static"
 )
 
 func main() {
-	cfg, err := config.Load()
-	if err != nil {
-		fail("config", err)
+	if len(os.Args) < 2 {
+		usage()
+		os.Exit(2)
 	}
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel}))
-	slog.SetDefault(log)
-
-	if cfg.AutoMigrate {
-		log.Info("running migrations")
-		if err := store.RunMigrations(cfg.DatabaseURL); err != nil {
-			fail("migrate", err)
-		}
+	cmd := os.Args[1]
+	args := os.Args[2:]
+	switch cmd {
+	case "ingest":
+		runIngest(args)
+	case "web":
+		runWeb(args)
+	case "-h", "--help", "help":
+		usage()
+	default:
+		fmt.Fprintf(os.Stderr, "unknown subcommand %q\n", cmd)
+		usage()
+		os.Exit(2)
 	}
+}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
+func usage() {
+	fmt.Fprint(os.Stderr, `meshbug — MeshCore mesh health dashboard
 
-	st, err := store.New(ctx, cfg.DatabaseURL)
-	if err != nil {
-		fail("store", err)
-	}
-	defer st.Close()
+usage:
+  meshbug ingest    Run the MQTT ingest service (writes to Postgres).
+  meshbug web       Run the web UI / SSE service (reads from Postgres).
 
-	if err := st.EnsurePartitions(ctx, time.Now().UTC()); err != nil {
-		fail("partitions", err)
-	}
-
-	hub := sse.NewHub()
-	mgr := mqtt.NewManager(cfg.Brokers, log)
-	if err := mgr.Start(ctx); err != nil {
-		fail("mqtt", err)
-	}
-
-	ing := ingest.New(cfg.Brokers, st, hub, mgr.Messages(), log)
-	go func() {
-		if err := ing.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			log.Error("ingest stopped", "err", err)
-		}
-	}()
-
-	go rollup.New(st, log).Run(ctx)
-	go anomaly.New(st, hub, log).Run(ctx)
-
-	// daily partition maintainer
-	go func() {
-		t := time.NewTicker(6 * time.Hour)
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-				if err := st.EnsurePartitions(ctx, time.Now().UTC()); err != nil {
-					log.Warn("partition maintenance", "err", err)
-				}
-			}
-		}
-	}()
-
-	srv := &http.Server{
-		Addr:              cfg.HTTPAddr,
-		Handler:           web.NewServer(st, hub, log, static.FS()).Handler(),
-		ReadHeaderTimeout: 10 * time.Second,
-		WriteTimeout:      0, // 0 for SSE
-		IdleTimeout:       2 * time.Minute,
-	}
-
-	go func() {
-		log.Info("http listening", "addr", cfg.HTTPAddr)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Error("http server", "err", err)
-			cancel()
-		}
-	}()
-
-	<-ctx.Done()
-	log.Info("shutting down")
-	shutCtx, shutCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer shutCancel()
-	_ = srv.Shutdown(shutCtx)
+Configuration is via environment variables. See README for the full list.
+`)
 }
 
 func fail(stage string, err error) {

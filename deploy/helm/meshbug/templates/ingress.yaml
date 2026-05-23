@@ -19,7 +19,7 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: {{ include "meshbug.fullname" . }}
+                name: {{ include "meshbug.fullname" . }}-web
                 port:
                   number: {{ .Values.service.port }}
   {{- if .Values.ingress.tls }}

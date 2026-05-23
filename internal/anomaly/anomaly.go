@@ -7,18 +7,17 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/jleight/meshbug/internal/sse"
+	"github.com/jleight/meshbug/internal/notify"
 	"github.com/jleight/meshbug/internal/store"
 )
 
 type Worker struct {
 	store *store.Store
-	hub   *sse.Hub
 	log   *slog.Logger
 }
 
-func New(s *store.Store, hub *sse.Hub, log *slog.Logger) *Worker {
-	return &Worker{store: s, hub: hub, log: log}
+func New(s *store.Store, log *slog.Logger) *Worker {
+	return &Worker{store: s, log: log}
 }
 
 func (w *Worker) Run(ctx context.Context) {
@@ -215,7 +214,9 @@ func (w *Worker) emit(ctx context.Context, kind string, subject []byte, severity
 		w.log.Warn("anomaly insert", "err", err)
 		return
 	}
-	w.hub.Publish(sse.Event{Topic: "anomalies", Payload: map[string]any{
-		"id": id, "kind": kind, "severity": severity, "details": details,
-	}})
+	if err := notify.Publish(ctx, w.store.Pool, notify.ChannelAnomaly, map[string]any{
+		"id": id, "kind": kind, "severity": severity,
+	}); err != nil {
+		w.log.Warn("notify publish failed", "channel", notify.ChannelAnomaly, "err", err)
+	}
 }

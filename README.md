@@ -55,6 +55,20 @@ MQTT broker(s) ─┐
 - Retention: forever. The packets table is monthly-partitioned so storage
   growth doesn't degrade query performance.
 
+## Two services
+
+MeshBug ships as one binary with two subcommands. Run them as separate
+processes (locally or in your cluster); they communicate only through
+Postgres rows and `LISTEN`/`NOTIFY` traffic.
+
+| Subcommand        | Reads MQTT | Writes Postgres | Runs HTTP | Notes |
+| ----------------- | :--------: | :-------------: | :-------: | ----- |
+| `meshbug ingest`  | ✓          | ✓               |           | Also runs rollup, anomaly, and partition-maintenance workers. Owns schema migrations. **Exactly one instance per database.** |
+| `meshbug web`     |            |                 | ✓         | Reads from Postgres, listens for `pg_notify` from ingest, pushes SSE patches to browsers. Horizontally scalable. |
+
+This split lets you keep ingest running 24/7 in your cluster and develop the
+UI locally against the same Postgres without producing background writes.
+
 ## Quickstart (local development)
 
 Requirements: [mise](https://mise.jdx.dev), Docker, and a Bash-compatible
@@ -64,16 +78,23 @@ shell. Everything else (`go`, `templ`, `golang-migrate`, `helm`,
 ```sh
 mise install              # toolchain
 mise run init-local       # scaffolds .mise/config.local.toml (gitignored)
-# edit .mise/config.local.toml — fill in your broker URL, user, password,
-# and a MESHBUG_DATABASE_URL.
+# edit .mise/config.local.toml — fill in MESHBUG_DATABASE_URL plus your
+# MQTT_BROKER / MQTT_USER / MQTT_PASSWORD if you're going to run ingest
+# locally as well.
 
-mise run pg-up            # ephemeral Postgres in Docker
+mise run pg-up            # ephemeral Postgres in Docker (skip if using a remote DB)
 mise run migrate-up
-mise run run              # builds + runs against your live broker
+
+# In one terminal:
+mise run ingest           # MQTT → Postgres (+ rollup + anomaly workers)
+
+# In another terminal:
+mise run web              # serves http://localhost:8080
 ```
 
-Open <http://localhost:8080>. New observer status rows should appear within
-~30 seconds and packets shortly after.
+**Developing UI against a remote Postgres:** point `MESHBUG_DATABASE_URL` at
+your cluster's database (via a `kubectl port-forward` or similar) and only
+run `mise run web`. Leave ingest in the cluster.
 
 ### Useful tasks
 
@@ -153,26 +174,27 @@ on the first build of each new month. Example progression:
 
 All knobs are environment variables:
 
-| Variable | Purpose |
-| -------- | ------- |
-| `MESHBUG_HTTP_ADDR` | Listen address. Default `:8080`. |
-| `MESHBUG_DATABASE_URL` | Postgres DSN. Required. |
-| `MESHBUG_AUTO_MIGRATE` | Apply embedded migrations at startup. Default `true`. |
-| `MESHBUG_LOG_LEVEL` | `debug` / `info` / `warn` / `error`. Default `info`. |
-| `MESHBUG_BROKERS_JSON` | Inline JSON broker list — see `internal/config/config.go`. |
-| `MESHBUG_BROKERS_CONFIG` | Path to a JSON broker file (used by the Helm ConfigMap). |
-| `MESHBUG_BROKER_<NAME>_USERNAME` / `_PASSWORD` | Per-broker credentials. Merged into the structural list at startup. |
-| `MQTT_BROKER` / `MQTT_USER` / `MQTT_PASSWORD` | Convenience: defines a single broker named `default` if no JSON is provided. |
+| Variable | Used by | Purpose |
+| -------- | ------- | ------- |
+| `MESHBUG_DATABASE_URL` | both    | Postgres DSN. Required. |
+| `MESHBUG_LOG_LEVEL`    | both    | `debug` / `info` / `warn` / `error`. Default `info`. |
+| `MESHBUG_HTTP_ADDR`    | web     | Listen address. Default `:8080`. |
+| `MESHBUG_AUTO_MIGRATE` | ingest  | Apply embedded migrations at startup. Default `true`. |
+| `MESHBUG_BROKERS_JSON` | ingest  | Inline JSON broker list — see `internal/config/config.go`. |
+| `MESHBUG_BROKERS_CONFIG` | ingest | Path to a JSON broker file (used by the Helm ConfigMap). |
+| `MESHBUG_BROKER_<NAME>_USERNAME` / `_PASSWORD` | ingest | Per-broker credentials, merged into the structural list at startup. |
+| `MQTT_BROKER` / `MQTT_USER` / `MQTT_PASSWORD` | ingest | Convenience: defines a single broker named `default` if no JSON is provided. |
 
 ## Project layout
 
 ```
-cmd/meshbug/                # entrypoint
+cmd/meshbug/                # entrypoint: dispatches `ingest` and `web` subcommands
 internal/
   config/                   # env-driven config loader
   mqtt/                     # paho MQTT manager (1..N brokers)
   meshcore/                 # MeshCore wire-format header decoder
   ingest/                   # MQTT → typed rows → batched pgx.CopyFrom
+  notify/                   # cross-process pub/sub via Postgres LISTEN/NOTIFY
   store/                    # pgx pool, queries, embedded migrations, partitions
   rollup/                   # 1m and 1h aggregation workers
   anomaly/                  # rule-based detectors

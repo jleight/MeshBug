@@ -41,15 +41,20 @@ description = "Run golangci-lint"
 depends = ["fetch-assets", "generate"]
 run = "golangci-lint run"
 
-[tasks.run]
-description = "Run meshbug against the live broker (uses MQTT_* env from .local.toml)"
+[tasks.ingest]
+description = "Run the ingest service locally (subscribes to MQTT, writes to Postgres)"
 depends = ["fetch-assets", "generate"]
 run = '''
 if [ -z "${MESHBUG_BROKERS_JSON:-}" ] && [ -n "${MQTT_BROKER:-}" ]; then
   export MESHBUG_BROKERS_JSON="$(printf '[{"name":"home","url":"%s","username":"%s","password":"%s","topicPrefix":"meshcore/"}]' "$MQTT_BROKER" "$MQTT_USER" "$MQTT_PASSWORD")"
 fi
-exec go run ./cmd/meshbug
+exec go run ./cmd/meshbug ingest
 '''
+
+[tasks.web]
+description = "Run the web service locally (UI + SSE; point MESHBUG_DATABASE_URL at any reachable Postgres)"
+depends = ["fetch-assets", "generate"]
+run = "exec go run ./cmd/meshbug web"
 
 [tasks."migrate-up"]
 description = "Apply database migrations"

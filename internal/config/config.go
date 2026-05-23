@@ -17,28 +17,58 @@ type Broker struct {
 	TopicPrefix string `json:"topicPrefix,omitempty"` // default "meshcore/"
 }
 
+// Config holds everything that the two services share or each one needs.
+// LoadIngest / LoadWeb populate the appropriate subset and validate it.
 type Config struct {
-	HTTPAddr     string
-	DatabaseURL  string
-	AutoMigrate  bool
-	LogLevel     slog.Level
-	Brokers      []Broker
+	HTTPAddr    string // web only
+	DatabaseURL string // both
+	AutoMigrate bool   // ingest only
+	LogLevel    slog.Level
+	Brokers     []Broker // ingest only
 }
 
-func Load() (*Config, error) {
+// LoadIngest reads the env vars the ingest service needs (DB URL + brokers).
+func LoadIngest() (*Config, error) {
+	c, err := loadCommon()
+	if err != nil {
+		return nil, err
+	}
+	c.AutoMigrate = envBool("MESHBUG_AUTO_MIGRATE", true)
+	if err := loadBrokers(c); err != nil {
+		return nil, err
+	}
+	if len(c.Brokers) == 0 {
+		return nil, fmt.Errorf("ingest: no brokers configured (set MESHBUG_BROKERS_JSON, MESHBUG_BROKERS_CONFIG, or MQTT_BROKER)")
+	}
+	return c, nil
+}
+
+// LoadWeb reads the env vars the web service needs (DB URL + listen addr).
+// Brokers are not required.
+func LoadWeb() (*Config, error) {
+	c, err := loadCommon()
+	if err != nil {
+		return nil, err
+	}
+	c.HTTPAddr = envDefault("MESHBUG_HTTP_ADDR", ":8080")
+	return c, nil
+}
+
+func loadCommon() (*Config, error) {
 	c := &Config{
-		HTTPAddr:    envDefault("MESHBUG_HTTP_ADDR", ":8080"),
 		DatabaseURL: os.Getenv("MESHBUG_DATABASE_URL"),
-		AutoMigrate: envBool("MESHBUG_AUTO_MIGRATE", true),
 		LogLevel:    parseLevel(envDefault("MESHBUG_LOG_LEVEL", "info")),
 	}
 	if c.DatabaseURL == "" {
 		return nil, fmt.Errorf("MESHBUG_DATABASE_URL is required")
 	}
+	return c, nil
+}
 
+func loadBrokers(c *Config) error {
 	if raw := os.Getenv("MESHBUG_BROKERS_JSON"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &c.Brokers); err != nil {
-			return nil, fmt.Errorf("parse MESHBUG_BROKERS_JSON: %w", err)
+			return fmt.Errorf("parse MESHBUG_BROKERS_JSON: %w", err)
 		}
 	} else if path := os.Getenv("MESHBUG_BROKERS_CONFIG"); path != "" {
 		// Helm-style: a ConfigMap-mounted JSON file with the structural broker
@@ -46,10 +76,10 @@ func Load() (*Config, error) {
 		// _PASSWORD env vars from Secrets.
 		raw, err := os.ReadFile(path)
 		if err != nil {
-			return nil, fmt.Errorf("read brokers config %s: %w", path, err)
+			return fmt.Errorf("read brokers config %s: %w", path, err)
 		}
 		if err := json.Unmarshal(raw, &c.Brokers); err != nil {
-			return nil, fmt.Errorf("parse brokers config %s: %w", path, err)
+			return fmt.Errorf("parse brokers config %s: %w", path, err)
 		}
 		for i, b := range c.Brokers {
 			envKey := strings.ToUpper(strings.ReplaceAll(b.Name, "-", "_"))
@@ -61,7 +91,7 @@ func Load() (*Config, error) {
 			}
 		}
 	}
-	// Convenience fallback: a single broker via MQTT_BROKER/USER/PASSWORD.
+	// Convenience fallback for local dev: MQTT_BROKER/USER/PASSWORD.
 	if len(c.Brokers) == 0 {
 		if url := os.Getenv("MQTT_BROKER"); url != "" {
 			c.Brokers = []Broker{{
@@ -80,10 +110,7 @@ func Load() (*Config, error) {
 			c.Brokers[i].TopicPrefix += "/"
 		}
 	}
-	if len(c.Brokers) == 0 {
-		return nil, fmt.Errorf("no brokers configured (set MESHBUG_BROKERS_JSON or MQTT_BROKER)")
-	}
-	return c, nil
+	return nil
 }
 
 func envDefault(k, d string) string {

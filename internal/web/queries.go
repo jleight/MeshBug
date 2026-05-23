@@ -236,6 +236,33 @@ func queryNeighbors(ctx context.Context, s *store.Store) ([]templates.NeighborRo
 	return out, nil
 }
 
+// queryLiveSince returns the rows newer than `since` (or the most recent
+// `limit` rows when `since` is the zero time), newest first.
+func queryLiveSince(ctx context.Context, s *store.Store, since time.Time, limit int) ([]templates.LivePacket, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT p.ts, p.observer_id, COALESCE(o.origin_name,''), p.packet_hash,
+		       COALESCE(NULLIF(p.packet_type,''), ''), COALESCE(p.route,''),
+		       p.rssi, p.snr, p.score, p.source_prefix
+		FROM packet_observations p
+		LEFT JOIN observers o ON o.id = p.observer_id
+		WHERE p.ts > $1
+		ORDER BY p.ts DESC
+		LIMIT $2
+	`, since, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []templates.LivePacket
+	for rows.Next() {
+		var p templates.LivePacket
+		if err := rows.Scan(&p.TS, &p.ObserverID, &p.Origin, &p.Hash, &p.Type, &p.Route, &p.RSSI, &p.SNR, &p.Score, &p.Source); err == nil {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
 func queryLiveInitial(ctx context.Context, s *store.Store, limit int) ([]templates.LivePacket, error) {
 	rows, err := s.Pool.Query(ctx, `
 		SELECT p.ts, p.observer_id, COALESCE(o.origin_name,''), p.packet_hash,

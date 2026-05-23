@@ -2,12 +2,10 @@ package web
 
 import (
 	"bytes"
-	"context"
 	"net/http"
 	"time"
 
 	"github.com/jleight/meshbug/internal/sse"
-	"github.com/jleight/meshbug/internal/store"
 	"github.com/jleight/meshbug/internal/web/templates"
 )
 
@@ -82,29 +80,25 @@ func (s *Server) topology(w http.ResponseWriter, r *http.Request) {
 // ---------- SSE endpoints ----------
 
 func (s *Server) sseLive(w http.ResponseWriter, r *http.Request) {
-	s.handleSSE(w, r, []string{"live-feed"}, func(dw *DatastarWriter, ev sse.Event) {
-		row, ok := ev.Payload.(store.PacketRow)
-		if !ok {
+	// Track the latest ts we've already pushed so each notify only sends the
+	// genuinely new rows, not the whole feed every time.
+	var lastTS time.Time
+	s.handleSSE(w, r, []string{"live-feed"}, func(dw *DatastarWriter, _ sse.Event) {
+		rows, err := queryLiveSince(r.Context(), s.store, lastTS, 50)
+		if err != nil || len(rows) == 0 {
 			return
 		}
-		p := liveRowFromPacket(row, s)
-		var buf bytes.Buffer
-		_ = templates.LivePacketRow(p).Render(r.Context(), &buf)
-		_ = dw.Patch("#live-rows", "prepend", buf.String())
+		// Re-emit oldest-first so prepend leaves the newest at top.
+		for i := len(rows) - 1; i >= 0; i-- {
+			p := rows[i]
+			if p.TS.After(lastTS) {
+				lastTS = p.TS
+			}
+			var buf bytes.Buffer
+			_ = templates.LivePacketRow(p).Render(r.Context(), &buf)
+			_ = dw.Patch("#live-rows", "prepend", buf.String())
+		}
 	})
-}
-
-func liveRowFromPacket(row store.PacketRow, s *Server) templates.LivePacket {
-	// Best-effort lookup of the observer's display name; render anyway if it fails.
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-	defer cancel()
-	var origin string
-	_ = s.store.Pool.QueryRow(ctx, `SELECT origin_name FROM observers WHERE id = $1`, row.ObserverID).Scan(&origin)
-	return templates.LivePacket{
-		TS: row.TS, ObserverID: row.ObserverID, Origin: origin, Hash: row.PacketHash,
-		Type: row.PacketType, Route: row.Route,
-		RSSI: row.RSSI, SNR: row.SNR, Score: row.Score, Source: row.SourcePrefix,
-	}
 }
 
 func (s *Server) sseOverview(w http.ResponseWriter, r *http.Request) {
@@ -122,9 +116,16 @@ func (s *Server) sseOverview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) sseAnomalies(w http.ResponseWriter, r *http.Request) {
-	s.handleSSE(w, r, []string{"anomalies"}, func(dw *DatastarWriter, ev sse.Event) {
-		_ = dw.Patch("#anomaly-toasts", "append",
-			"<div class=\"alert alert-danger\">anomaly: "+stringPayload(ev.Payload)+"</div>")
+	// Re-render the full anomalies list on every notification — simpler than
+	// diffing, and the table is small.
+	s.handleSSE(w, r, []string{"anomalies"}, func(dw *DatastarWriter, _ sse.Event) {
+		rows, err := queryAnomalies(r.Context(), s.store)
+		if err != nil {
+			return
+		}
+		var buf bytes.Buffer
+		_ = templates.Anomalies(rows).Render(r.Context(), &buf)
+		_ = dw.Patch("body", "outer", buf.String())
 	})
 }
 
@@ -146,16 +147,3 @@ func (s *Server) sseObserver(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func stringPayload(v any) string {
-	switch x := v.(type) {
-	case string:
-		return x
-	case map[string]any:
-		s := ""
-		for k, vv := range x {
-			s += k + "=" + sprintf("%v", vv) + " "
-		}
-		return s
-	}
-	return sprintf("%v", v)
-}
