@@ -12,6 +12,7 @@ package project
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"log/slog"
@@ -306,19 +307,23 @@ func (p *Projector) decodePacket(
 		return row, true
 	}
 
-	d, err := meshcore.Decode(rawBytes)
+	pkt, err := meshcore.Parse(rawBytes)
 	switch {
 	case err == nil:
-		t := d.PayloadType
+		t := int16(pkt.PayloadType())
 		row.DecodedType = &t
-		row.SourcePrefix = d.NeighborSource()
-		row.DestPrefix = d.DstHash
-		row.TransportCodes = d.TransportCodes
+		row.SourcePrefix = meshcore.NeighborSource(pkt)
+		row.DestPrefix = meshcore.PayloadDstHash(pkt)
+		if pkt.IsTransport() {
+			row.TransportCodes = make([]byte, 4)
+			binary.LittleEndian.PutUint16(row.TransportCodes[0:2], pkt.TransportCode1)
+			binary.LittleEndian.PutUint16(row.TransportCodes[2:4], pkt.TransportCode2)
+		}
 		if row.Route == "" {
-			row.Route = meshcore.RouteName(d.Route)
+			row.Route = pkt.RouteTypeString()
 		}
 		if row.PacketType == "" {
-			row.PacketType = meshcore.PayloadTypeName(t)
+			row.PacketType = pkt.PayloadTypeString()
 		}
 
 	case errors.Is(err, meshcore.ErrDoNotRetransmit):
