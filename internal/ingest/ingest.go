@@ -24,7 +24,11 @@ type Ingester struct {
 	flushEvery time.Duration
 }
 
-func New(s *store.Store, in <-chan mqtt.Message, log *slog.Logger) *Ingester {
+func New(
+	s *store.Store,
+	in <-chan mqtt.Message,
+	log *slog.Logger,
+) *Ingester {
 	return &Ingester{
 		store:      s,
 		in:         in,
@@ -39,24 +43,53 @@ func New(s *store.Store, in <-chan mqtt.Message, log *slog.Logger) *Ingester {
 // and process the new events.
 func (i *Ingester) Run(ctx context.Context) error {
 	batch := make([]mqtt.Message, 0, i.batchSize)
+
 	t := time.NewTimer(i.flushEvery)
 	defer t.Stop()
+
 	flush := func() {
 		if len(batch) == 0 {
 			return
 		}
+
 		input := make([]store.RawEventInput, len(batch))
+
 		for i, m := range batch {
-			input[i] = store.RawEventInput{Broker: m.Broker, Topic: m.Topic, Payload: m.Payload}
-		}
-		n, err := i.store.InsertRawEvents(ctx, input)
-		if err != nil {
-			i.log.Error("raw_events write failed", "err", err, "n", len(batch))
-		} else if n > 0 {
-			if err := notify.Publish(ctx, i.store.Pool, NotifyChannel, map[string]any{"count": n}); err != nil {
-				i.log.Warn("notify publish failed", "channel", NotifyChannel, "err", err)
+			input[i] = store.RawEventInput{
+				Broker:  m.Broker,
+				Topic:   m.Topic,
+				Payload: m.Payload,
 			}
 		}
+
+		n, err := i.store.InsertRawEvents(ctx, input)
+
+		if err != nil {
+			i.log.Error(
+				"raw_events write failed",
+				"err",
+				err,
+				"n",
+				len(batch),
+			)
+		} else if n > 0 {
+			err = notify.Publish(
+				ctx,
+				i.store.Pool,
+				NotifyChannel,
+				map[string]any{"count": n},
+			)
+			if err != nil {
+				i.log.Warn(
+					"notify publish failed",
+					"channel",
+					NotifyChannel,
+					"err",
+					err,
+				)
+			}
+		}
+
 		batch = batch[:0]
 	}
 
@@ -65,23 +98,29 @@ func (i *Ingester) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			flush()
 			return ctx.Err()
+
 		case <-t.C:
 			flush()
 			t.Reset(i.flushEvery)
+
 		case msg, ok := <-i.in:
 			if !ok {
 				flush()
 				return nil
 			}
+
 			batch = append(batch, msg)
+
 			if len(batch) >= i.batchSize {
 				flush()
+
 				if !t.Stop() {
 					select {
 					case <-t.C:
 					default:
 					}
 				}
+
 				t.Reset(i.flushEvery)
 			}
 		}

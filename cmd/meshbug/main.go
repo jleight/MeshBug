@@ -29,8 +29,10 @@ func main() {
 		usage()
 		os.Exit(2)
 	}
+
 	cmd := os.Args[1]
 	args := os.Args[2:]
+
 	switch cmd {
 	case "migrate":
 		runMigrate(args)
@@ -43,14 +45,20 @@ func main() {
 	case "-h", "--help", "help":
 		usage()
 	default:
-		fmt.Fprintf(os.Stderr, "unknown subcommand %q\n", cmd)
+		_, err := fmt.Fprintf(os.Stderr, "unknown subcommand %q\n", cmd)
+		if err != nil {
+			os.Exit(2)
+		}
+
 		usage()
 		os.Exit(2)
 	}
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `meshbug — MeshCore mesh health dashboard
+	_, err := fmt.Fprint(
+		os.Stderr,
+		`meshbug — MeshCore mesh health dashboard
 
 usage:
   meshbug migrate [all|common|ingest|project]
@@ -63,9 +71,18 @@ usage:
 
 Configuration is via environment variables. See README for the full list.
 `)
+	if err != nil {
+		os.Exit(2)
+	}
 }
 
 func fail(stage string, err error) {
-	slog.Error("startup failed", "stage", stage, "err", err)
+	slog.Error(
+		"startup failed",
+		"stage",
+		stage,
+		"err",
+		err,
+	)
 	os.Exit(1)
 }

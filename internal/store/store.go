@@ -18,18 +18,24 @@ func New(ctx context.Context, databaseURL string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse database url: %w", err)
 	}
+
 	cfg.MaxConns = 16
 	cfg.MinConns = 2
 	cfg.MaxConnIdleTime = 5 * time.Minute
+
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("connect: %w", err)
 	}
+
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("ping: %w", err)
 	}
+
 	return &Store{Pool: pool}, nil
 }
 
-func (s *Store) Close() { s.Pool.Close() }
+func (s *Store) Close() {
+	s.Pool.Close()
+}

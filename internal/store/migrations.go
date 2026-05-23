@@ -21,11 +21,13 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"net/url"
 	"strings"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5"
+	"github.com/golang-migrate/migrate/v4/source"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 )
 
@@ -42,7 +44,11 @@ const (
 )
 
 // AllScopes is the order migrations are applied when running all scopes.
-var AllScopes = []Scope{ScopeCommon, ScopeIngest, ScopeProject}
+var AllScopes = []Scope{
+	ScopeCommon,
+	ScopeIngest,
+	ScopeProject,
+}
 
 // RunMigrations applies every scope in order. Each scope's progress is tracked
 // in its own `schema_migrations_<scope>` table. Pass specific scopes to limit
@@ -51,11 +57,13 @@ func RunMigrations(databaseURL string, scopes ...Scope) error {
 	if len(scopes) == 0 {
 		scopes = AllScopes
 	}
+
 	for _, scope := range scopes {
 		if err := runScope(databaseURL, scope); err != nil {
 			return fmt.Errorf("migrate scope %s: %w", scope, err)
 		}
 	}
+
 	return nil
 }
 
@@ -64,13 +72,18 @@ func runScope(databaseURL string, scope Scope) error {
 	if err != nil {
 		return nil // scope dir absent
 	}
+
 	hasSQL := false
-	_ = fs.WalkDir(sub, ".", func(_ string, d fs.DirEntry, err error) error {
-		if err == nil && !d.IsDir() && strings.HasSuffix(d.Name(), ".sql") {
-			hasSQL = true
-		}
-		return nil
-	})
+	_ = fs.WalkDir(
+		sub,
+		".",
+		func(_ string, d fs.DirEntry, err error) error {
+			if err == nil && !d.IsDir() && strings.HasSuffix(d.Name(), ".sql") {
+				hasSQL = true
+			}
+			return nil
+		},
+	)
 	if !hasSQL {
 		return nil // no migrations for this scope yet
 	}
@@ -79,10 +92,17 @@ func runScope(databaseURL string, scope Scope) error {
 	if err != nil {
 		return err
 	}
+	defer func(src source.Driver) {
+		if err := src.Close(); err != nil {
+			log.Printf("error closing migrations source: %v", err)
+		}
+	}(src)
+
 	target, err := buildMigrateURL(databaseURL, "schema_migrations_"+string(scope))
 	if err != nil {
 		return err
 	}
+
 	m, err := migrate.NewWithSourceInstance("iofs", src, target)
 	if err != nil {
 		return err
@@ -93,9 +113,11 @@ func runScope(databaseURL string, scope Scope) error {
 			_ = dbErr
 		}
 	}()
+
 	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return err
 	}
+
 	return nil
 }
 
@@ -107,12 +129,16 @@ func buildMigrateURL(databaseURL, table string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	switch u.Scheme {
 	case "postgres", "postgresql":
 		u.Scheme = "pgx5"
 	}
+
 	q := u.Query()
 	q.Set("x-migrations-table", table)
+
 	u.RawQuery = q.Encode()
+
 	return u.String(), nil
 }

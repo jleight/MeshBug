@@ -16,14 +16,20 @@ import (
 //	meshbug migrate            apply all scopes (common, ingest, project)
 //	meshbug migrate all        same as above
 //	meshbug migrate common     apply just the common scope
-//	meshbug migrate ingest     apply just the ingest scope
-//	meshbug migrate project    apply just the project scope
+//	meshbug migrate ingest     apply common + ingest scopes
+//	meshbug migrate project    apply common + project scopes
 func runMigrate(args []string) {
-	cfg, err := config.LoadWeb() // we only need DATABASE_URL + LOG_LEVEL
+	cfg, err := config.LoadProject() // we only need LogLevel + DatabaseURL
 	if err != nil {
 		fail("config", err)
 	}
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel}))
+
+	handler := slog.NewTextHandler(
+		os.Stderr,
+		&slog.HandlerOptions{Level: cfg.LogLevel},
+	)
+
+	log := slog.New(handler)
 	slog.SetDefault(log)
 
 	scopes := store.AllScopes
@@ -38,14 +44,24 @@ func runMigrate(args []string) {
 		case "project":
 			scopes = []store.Scope{store.ScopeCommon, store.ScopeProject}
 		default:
-			fmt.Fprintf(os.Stderr, "unknown scope %q. Valid: all, common, ingest, project\n", args[0])
+			_, err := fmt.Fprintf(
+				os.Stderr,
+				"unknown scope %q. Valid: all, common, ingest, project\n",
+				args[0],
+			)
+			if err != nil {
+				os.Exit(2)
+			}
+
 			os.Exit(2)
 		}
 	}
 
 	log.Info("applying migrations", "scopes", scopes)
+
 	if err := store.RunMigrations(cfg.DatabaseURL, scopes...); err != nil {
 		fail("migrate", err)
 	}
+
 	log.Info("migrations applied")
 }

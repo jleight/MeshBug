@@ -17,15 +17,19 @@ func TestDecodeAdvertFlood(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
+
 	if d.Route != RouteFlood {
 		t.Errorf("route = %d, want %d", d.Route, RouteFlood)
 	}
+
 	if d.PayloadType != PayloadTypeADVERT {
 		t.Errorf("payload type = %d, want ADVERT", d.PayloadType)
 	}
+
 	if !bytes.Equal(d.SrcHash, pub[:4]) {
 		t.Errorf("src hash = %x, want %x", d.SrcHash, pub[:4])
 	}
+
 	if RouteName(d.Route) != "F" {
 		t.Errorf("route name = %q, want F", RouteName(d.Route))
 	}
@@ -42,24 +46,31 @@ func TestDecodeTxtMsgDirectWithPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
+
 	if d.Route != RouteDirect {
 		t.Errorf("route = %d, want direct", d.Route)
 	}
+
 	if d.PayloadType != PayloadTypeTXTMSG {
 		t.Errorf("payload type = %d, want TXT_MSG", d.PayloadType)
 	}
+
 	if len(d.Path) != 2 {
 		t.Fatalf("path len = %d, want 2", len(d.Path))
 	}
+
 	if !bytes.Equal(d.LastHopHash, []byte{0x22}) {
 		t.Errorf("last hop = %x, want 22", d.LastHopHash)
 	}
+
 	if !bytes.Equal(d.DstHash, []byte{0xAA}) {
 		t.Errorf("dst = %x, want AA", d.DstHash)
 	}
+
 	if !bytes.Equal(d.SrcHash, []byte{0xBB}) {
 		t.Errorf("src = %x, want BB", d.SrcHash)
 	}
+
 	if !bytes.Equal(d.NeighborSource(), []byte{0x22}) {
 		t.Errorf("neighbor = %x, want 22", d.NeighborSource())
 	}
@@ -76,22 +87,27 @@ func TestDecodeTransportFlood(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
+
 	if d.Route != RouteTransportFlood {
 		t.Errorf("route = %d, want transport flood", d.Route)
 	}
+
 	if d.PayloadType != PayloadTypeACK {
 		t.Errorf("type = %d, want ACK", d.PayloadType)
 	}
+
 	if hex.EncodeToString(d.TransportCodes) != "01020304" {
 		t.Errorf("transport codes = %x", d.TransportCodes)
 	}
+
 	if d.PayloadOffset != 6 {
 		t.Errorf("payload offset = %d, want 6", d.PayloadOffset)
 	}
 }
 
 func TestDecodeDoNotRetransmit(t *testing.T) {
-	if _, err := Decode([]byte{0xFF}); err != ErrDoNotRetransmit {
+	_, err := Decode([]byte{0xFF})
+	if err != ErrDoNotRetransmit {
 		t.Errorf("err = %v, want ErrDoNotRetransmit", err)
 	}
 }
@@ -100,6 +116,7 @@ func TestDecodeTruncated(t *testing.T) {
 	if _, err := Decode(nil); err == nil {
 		t.Errorf("expected error for empty input")
 	}
+
 	// transport route but no transport bytes
 	if _, err := Decode([]byte{0x0C, 0x00}); err == nil {
 		t.Errorf("expected error for truncated transport codes")

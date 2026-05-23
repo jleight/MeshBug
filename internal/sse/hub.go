@@ -1,5 +1,5 @@
 // Package sse is a tiny in-process publish/subscribe hub used to fan out live
-// updates from the ingest pipeline to HTTP SSE handlers.
+// updates from the projector to HTTP SSE handlers.
 package sse
 
 import (
@@ -15,7 +15,7 @@ type Event struct {
 
 // Hub fans out events by topic. Subscribers are best-effort: if a subscriber's
 // channel is full, the event is dropped for that subscriber rather than
-// blocking ingest.
+// blocking the writer.
 type Hub struct {
 	mu     sync.RWMutex
 	nextID uint64
@@ -23,14 +23,17 @@ type Hub struct {
 }
 
 func NewHub() *Hub {
-	return &Hub{subs: map[string]map[uint64]chan Event{}}
+	return &Hub{
+		subs: map[string]map[uint64]chan Event{},
+	}
 }
 
-// Subscribe returns a buffered channel that will receive events for any of the
-// given topics, plus an unsubscribe func.
+// Subscribe returns a buffered channel that will receive events for any of
+// the given topics, plus an unsubscribe func.
 func (h *Hub) Subscribe(buffer int, topics ...string) (<-chan Event, func()) {
 	ch := make(chan Event, buffer)
 	id := atomic.AddUint64(&h.nextID, 1)
+
 	h.mu.Lock()
 	for _, t := range topics {
 		if h.subs[t] == nil {
@@ -39,7 +42,8 @@ func (h *Hub) Subscribe(buffer int, topics ...string) (<-chan Event, func()) {
 		h.subs[t][id] = ch
 	}
 	h.mu.Unlock()
-	return ch, func() {
+
+	unsubscribe := func() {
 		h.mu.Lock()
 		for _, t := range topics {
 			if m := h.subs[t]; m != nil {
@@ -50,20 +54,23 @@ func (h *Hub) Subscribe(buffer int, topics ...string) (<-chan Event, func()) {
 			}
 		}
 		h.mu.Unlock()
+
 		close(ch)
 	}
+
+	return ch, unsubscribe
 }
 
 // Publish sends e to every subscriber of e.Topic. Non-blocking.
 func (h *Hub) Publish(e Event) {
 	h.mu.RLock()
-	subs := h.subs[e.Topic]
-	for _, ch := range subs {
+	defer h.mu.RUnlock()
+
+	for _, ch := range h.subs[e.Topic] {
 		select {
 		case ch <- e:
 		default:
 			// subscriber is slow — drop.
 		}
 	}
-	h.mu.RUnlock()
 }

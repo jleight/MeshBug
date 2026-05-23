@@ -23,25 +23,48 @@ import (
 // rebuilds from raw_events on next run.
 func runProject(args []string) {
 	fs := flag.NewFlagSet("project", flag.ExitOnError)
-	reset := fs.Bool("reset", false, "Truncate every derived table and rewind the cursor before running")
+	reset := fs.Bool(
+		"reset",
+		false,
+		"Truncate every derived table and rewind the cursor before running",
+	)
 	_ = fs.Parse(args)
 
-	// Project uses the same env as ingest minus brokers.
-	cfg, err := loadProjectConfig()
+	cfg, err := config.LoadProject()
 	if err != nil {
 		fail("config", err)
 	}
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel}))
+
+	handler := slog.NewTextHandler(
+		os.Stderr,
+		&slog.HandlerOptions{Level: cfg.LogLevel},
+	)
+
+	log := slog.New(handler)
 	slog.SetDefault(log)
 
 	if cfg.AutoMigrate {
-		log.Info("running migrations", "scopes", []store.Scope{store.ScopeCommon, store.ScopeProject})
-		if err := store.RunMigrations(cfg.DatabaseURL, store.ScopeCommon, store.ScopeProject); err != nil {
+		log.Info(
+			"running migrations",
+			"scopes",
+			[]store.Scope{store.ScopeCommon, store.ScopeProject},
+		)
+
+		err = store.RunMigrations(
+			cfg.DatabaseURL,
+			store.ScopeCommon,
+			store.ScopeProject,
+		)
+		if err != nil {
 			fail("migrate", err)
 		}
 	}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, cancel := signal.NotifyContext(
+		context.Background(),
+		os.Interrupt,
+		syscall.SIGTERM,
+	)
 	defer cancel()
 
 	st, err := store.New(ctx, cfg.DatabaseURL)
@@ -62,7 +85,8 @@ func runProject(args []string) {
 	}
 
 	go func() {
-		if err := proj.Run(ctx, cfg.DatabaseURL); err != nil && !errors.Is(err, context.Canceled) {
+		err := proj.Run(ctx, cfg.DatabaseURL)
+		if err != nil && !errors.Is(err, context.Canceled) {
 			log.Error("project stopped", "err", err)
 		}
 	}()
@@ -74,10 +98,12 @@ func runProject(args []string) {
 	go func() {
 		t := time.NewTicker(6 * time.Hour)
 		defer t.Stop()
+
 		for {
 			select {
 			case <-ctx.Done():
 				return
+
 			case <-t.C:
 				if err := st.EnsurePartitions(ctx, time.Now().UTC()); err != nil {
 					log.Warn("partition maintenance", "err", err)
@@ -89,28 +115,4 @@ func runProject(args []string) {
 	log.Info("project running")
 	<-ctx.Done()
 	log.Info("shutting down")
-}
-
-// loadProjectConfig is like LoadIngest minus broker validation — the
-// projector doesn't talk to MQTT.
-func loadProjectConfig() (*config.Config, error) {
-	// Reuse LoadWeb (which doesn't require brokers) and bolt on AutoMigrate.
-	c, err := config.LoadWeb()
-	if err != nil {
-		return nil, err
-	}
-	c.AutoMigrate = envBool("MESHBUG_AUTO_MIGRATE", true)
-	return c, nil
-}
-
-func envBool(k string, d bool) bool {
-	v := os.Getenv(k)
-	switch v {
-	case "1", "true", "yes", "on":
-		return true
-	case "0", "false", "no", "off":
-		return false
-	default:
-		return d
-	}
 }

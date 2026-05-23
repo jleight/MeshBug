@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/jleight/meshbug/internal/config"
 	"github.com/jleight/meshbug/internal/ingest"
@@ -22,17 +23,37 @@ func runIngest(_ []string) {
 	if err != nil {
 		fail("config", err)
 	}
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel}))
+
+	handler := slog.NewTextHandler(
+		os.Stderr,
+		&slog.HandlerOptions{Level: cfg.LogLevel},
+	)
+
+	log := slog.New(handler)
 	slog.SetDefault(log)
 
 	if cfg.AutoMigrate {
-		log.Info("running migrations", "scopes", []store.Scope{store.ScopeCommon, store.ScopeIngest})
-		if err := store.RunMigrations(cfg.DatabaseURL, store.ScopeCommon, store.ScopeIngest); err != nil {
+		log.Info(
+			"running migrations",
+			"scopes",
+			[]store.Scope{store.ScopeCommon, store.ScopeIngest},
+		)
+
+		err = store.RunMigrations(
+			cfg.DatabaseURL,
+			store.ScopeCommon,
+			store.ScopeIngest,
+		)
+		if err != nil {
 			fail("migrate", err)
 		}
 	}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, cancel := signal.NotifyContext(
+		context.Background(),
+		os.Interrupt,
+		syscall.SIGTERM,
+	)
 	defer cancel()
 
 	st, err := store.New(ctx, cfg.DatabaseURL)
@@ -44,7 +65,7 @@ func runIngest(_ []string) {
 	// raw_events is partitioned monthly — make sure the current and next
 	// month's partition exist (the project service also calls this, but ingest
 	// might come up first on a fresh install).
-	if err := st.EnsurePartitions(ctx, nowUTC()); err != nil {
+	if err := st.EnsurePartitions(ctx, time.Now().UTC()); err != nil {
 		fail("partitions", err)
 	}
 
