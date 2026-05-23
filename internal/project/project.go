@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"time"
 
 	"github.com/jleight/meshbug/internal/ingest"
 	"github.com/jleight/meshbug/internal/notify"
@@ -56,6 +57,9 @@ func New(
 	// must flush before PacketObservations writes the current batch's
 	// rows, so their rehydrate SELECT sees only historical state. The
 	// in-memory accumulator already has this batch's events.
+	//
+	// Anomalies runs last: its detectors query the rollup tables, which
+	// must be up to date for the current batch before detection runs.
 	stageList := []pipeline.Stage{
 		stages.NewObservers(),
 		stages.NewObserverStatus(),
@@ -64,6 +68,21 @@ func New(
 		stages.NewRollupObserver1h(),
 		stages.NewRollupNeighbor1m(),
 		stages.NewPacketObservations(),
+		stages.NewAnomalies(
+			&stages.RSSIDrop{
+				RecentWindow:   time.Hour,
+				BaselineWindow: time.Hour,
+				MinSamples:     10,
+				ThresholdDB:    6,
+				Severity:       "warn",
+			},
+			&stages.ObserverSilent{
+				RecentWindow:      15 * time.Minute,
+				BaselineWindow:    24 * time.Hour,
+				BaselineMinPerMin: 1,
+				Severity:          "crit",
+			},
+		),
 	}
 
 	return &Projector{
