@@ -1,1 +1,12 @@
-{"signedContributors":[]}
+{
+  "signedContributors": [
+    {
+      "name": "jleight",
+      "id": 169047,
+      "comment_id": 4523426541,
+      "created_at": "2026-05-22T23:59:16Z",
+      "repoId": 1246875586,
+      "pullRequestNo": 1
+    }
+  ]
+}
