@@ -63,6 +63,7 @@ func New(
 	stageList := []pipeline.Stage{
 		stages.NewObservers(),
 		stages.NewObserverStatus(),
+		stages.NewNodes(),
 		stages.NewPacketsUnique(),
 		stages.NewRollupObserver1m(),
 		stages.NewRollupObserver1h(),

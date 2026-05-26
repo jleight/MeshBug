@@ -175,6 +175,7 @@ func (s *Store) ResetDerivedState(ctx context.Context, projectorName string) err
 		`TRUNCATE TABLE packets_unique`,
 		`TRUNCATE TABLE packet_observations`,
 		`TRUNCATE TABLE observer_status`,
+		`TRUNCATE TABLE nodes`,
 		// observers is referenced by observer_status FK; emptied last.
 		`DELETE FROM observers`,
 		`UPDATE projector_state SET last_event_id = 0, updated_at = now() WHERE name = $1`,

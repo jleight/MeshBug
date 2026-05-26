@@ -7,10 +7,13 @@ import (
 	"log/slog"
 	"strings"
 
+	mc "github.com/meshcore-go/meshcore-go"
+
 	"github.com/jleight/meshbug/internal/meshcore"
 	"github.com/jleight/meshbug/internal/project/pipeline"
 	"github.com/jleight/meshbug/internal/store"
 )
+
 
 // decoder turns store.RawEvent rows into pipeline.Event values. It is the
 // only place that knows about MQTT topic shapes, JSON payload shapes, or
@@ -167,6 +170,25 @@ func (d *decoder) decodePacket(raw store.RawEvent) (*pipeline.PacketPayload, boo
 
 		if p.PacketType == "" {
 			p.PacketType = pkt.PayloadTypeString()
+		}
+
+		if pkt.PayloadType() == mc.PayloadTypeAdvert {
+			adv := meshcore.DecodeAdvert(pkt.Payload)
+			if adv != nil {
+				p.Advert = &pipeline.AdvertInfo{
+					PublicKey: adv.PublicKey,
+					Timestamp: adv.Timestamp,
+					NodeType:  adv.NodeType,
+					Name:      adv.Name,
+					HasLatLon: adv.HasLatLon,
+					LatE6:     adv.LatE6,
+					LonE6:     adv.LonE6,
+					HasFeat1:  adv.HasFeat1,
+					Feat1:     adv.Feat1,
+					HasFeat2:  adv.HasFeat2,
+					Feat2:     adv.Feat2,
+				}
+			}
 		}
 
 	case errors.Is(err, meshcore.ErrDoNotRetransmit):

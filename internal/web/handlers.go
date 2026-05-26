@@ -2,8 +2,13 @@ package web
 
 import (
 	"bytes"
+	"encoding/hex"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
+
+	"github.com/go-chi/chi/v5"
 
 	"github.com/jleight/meshbug/internal/sse"
 	"github.com/jleight/meshbug/internal/web/templates"
@@ -53,6 +58,60 @@ func (s *Server) neighbors(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = templates.Neighbors(rows).Render(r.Context(), w)
+}
+
+func (s *Server) nodes(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	page, _ := strconv.Atoi(q.Get("page"))
+	if page < 1 {
+		page = 1
+	}
+
+	size, _ := strconv.Atoi(q.Get("size"))
+	if size <= 0 {
+		size = 50
+	}
+	if size > 500 {
+		size = 500
+	}
+
+	in := templates.NodesPage{
+		Filter: templates.NodeFilter{
+			Q:    q.Get("q"),
+			Type: q.Get("type"),
+		},
+		Sort: q.Get("sort"),
+		Dir:  q.Get("dir"),
+		Page: page,
+		Size: size,
+	}
+
+	d, err := queryNodes(r.Context(), s.store, in)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	_ = templates.Nodes(d).Render(r.Context(), w)
+}
+
+func (s *Server) nodeDetail(w http.ResponseWriter, r *http.Request) {
+	idStr := strings.TrimSpace(chi.URLParam(r, "id"))
+
+	pubkey, err := hex.DecodeString(idStr)
+	if err != nil || len(pubkey) == 0 {
+		http.Error(w, "bad node id", http.StatusBadRequest)
+		return
+	}
+
+	d, err := queryNodeDetail(r.Context(), s.store, pubkey)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	_ = templates.NodeDetailPage(d).Render(r.Context(), w)
 }
 
 func (s *Server) live(w http.ResponseWriter, r *http.Request) {

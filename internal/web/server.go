@@ -83,6 +83,8 @@ func (s *Server) routes(staticFS fs.FS) http.Handler {
 	)
 
 	r.Get("/", s.overview)
+	r.Get("/nodes", s.nodes)
+	r.Get("/nodes/{id}", s.nodeDetail)
 	r.Get("/observers", s.observers)
 	r.Get("/observers/{id}", s.observerDetail)
 	r.Get("/neighbors", s.neighbors)

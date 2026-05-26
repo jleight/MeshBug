@@ -12,6 +12,8 @@ package meshcore
 
 import (
 	"errors"
+	"strings"
+	"time"
 
 	mc "github.com/meshcore-go/meshcore-go"
 )
@@ -89,6 +91,71 @@ func payloadSrcHash(pkt *mc.Packet) []byte {
 	}
 
 	return nil
+}
+
+// Advert captures the advert fields we care about for the nodes
+// projection. Lat/lon and feature flags are reported alongside boolean
+// presence flags so callers can distinguish "missing" from "zero".
+type Advert struct {
+	PublicKey []byte
+	Timestamp time.Time
+	NodeType  string
+
+	Name string
+
+	HasLatLon bool
+	LatE6     int32
+	LonE6     int32
+
+	HasFeat1 bool
+	Feat1    uint16
+
+	HasFeat2 bool
+	Feat2    uint16
+}
+
+// DecodeAdvert parses an ADVERT packet's payload (pubkey + timestamp +
+// signature + appdata). Returns nil when the payload is not a valid
+// advert or carries no app data.
+func DecodeAdvert(payload []byte) *Advert {
+	a, err := mc.AdvertFromBytes(payload)
+	if err != nil {
+		return nil
+	}
+
+	app := a.AppData()
+	flags := a.Flags()
+
+	// Advert names are arbitrary bytes on the wire — coerce to valid UTF-8
+	// so Postgres text columns accept them. Also strip NUL bytes, which
+	// Postgres rejects in text values regardless of encoding.
+	name := strings.ToValidUTF8(app.Name, "�")
+	name = strings.ReplaceAll(name, "\x00", "")
+
+	out := &Advert{
+		PublicKey: append([]byte(nil), a.PublicKey.PublicKeyBytes()...),
+		Timestamp: time.Unix(int64(a.Timestamp), 0).UTC(),
+		NodeType:  app.Type,
+		Name:      name,
+	}
+
+	if flags&mc.AdvertLatLonMask != 0 {
+		out.HasLatLon = true
+		out.LatE6 = app.Lat
+		out.LonE6 = app.Lon
+	}
+
+	if flags&mc.AdvertFeat1Mask != 0 {
+		out.HasFeat1 = true
+		out.Feat1 = app.Feat1
+	}
+
+	if flags&mc.AdvertFeat2Mask != 0 {
+		out.HasFeat2 = true
+		out.Feat2 = app.Feat2
+	}
+
+	return out
 }
 
 // NeighborSource returns the identifier we use for "which neighbor

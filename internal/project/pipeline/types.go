@@ -88,6 +88,29 @@ type PacketPayload struct {
 	SourcePrefix   []byte
 	DestPrefix     []byte
 	TransportCodes []byte
+
+	Advert *AdvertInfo
+}
+
+// AdvertInfo is the decoded ADVERT app-data payload. Present on a
+// PacketPayload only when DecodedType == PayloadTypeAdvert and the
+// advert parsed cleanly.
+type AdvertInfo struct {
+	PublicKey []byte
+	Timestamp time.Time
+	NodeType  string
+
+	Name string
+
+	HasLatLon bool
+	LatE6     int32
+	LonE6     int32
+
+	HasFeat1 bool
+	Feat1    uint16
+
+	HasFeat2 bool
+	Feat2    uint16
 }
 
 // Stage owns one derived table (or one group of them). The pipeline calls

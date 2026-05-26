@@ -2,6 +2,9 @@ package web
 
 import (
 	"context"
+	"encoding/hex"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jleight/meshbug/internal/store"
@@ -597,6 +600,326 @@ func queryAnomalies(
 	}
 
 	return out, nil
+}
+
+// Columns the Nodes page is allowed to sort by. The map values are the
+// SQL expressions to ORDER BY. Anything not in the map falls back to
+// last_seen DESC, which is what most users want by default.
+var nodesSortColumns = map[string]string{
+	"name":             "lower(name)",
+	"node_type":        "node_type",
+	"advert_count":     "advert_count",
+	"advert_timestamp": "advert_timestamp",
+	"first_seen":       "first_seen",
+	"last_seen":        "last_seen",
+}
+
+func queryNodes(
+	ctx context.Context,
+	s *store.Store,
+	page templates.NodesPage,
+) (templates.NodesPage, error) {
+	page.Types = []string{"CHAT", "REPEATER", "ROOM", "SENSOR", "NONE"}
+
+	args := []any{}
+	where := []string{}
+
+	q := strings.TrimSpace(page.Filter.Q)
+	if q != "" {
+		hexBytes, err := hex.DecodeString(q)
+		if err == nil && len(hexBytes) > 0 {
+			args = append(args, hexBytes)
+			where = append(
+				where,
+				"(lower(name) LIKE '%' || lower($"+placeholder(len(args)+1)+") || '%' OR substring(public_key from 1 for "+itoa(len(hexBytes))+") = $"+placeholder(len(args))+")",
+			)
+			args = append(args, q)
+		} else {
+			args = append(args, q)
+			where = append(
+				where,
+				"lower(name) LIKE '%' || lower($"+placeholder(len(args))+") || '%'",
+			)
+		}
+	}
+
+	if page.Filter.Type != "" {
+		args = append(args, page.Filter.Type)
+		where = append(where, "node_type = $"+placeholder(len(args)))
+	}
+
+	whereSQL := ""
+	if len(where) > 0 {
+		whereSQL = "WHERE " + strings.Join(where, " AND ")
+	}
+
+	err := s.Pool.
+		QueryRow(
+			ctx,
+			"SELECT COUNT(*) FROM nodes "+whereSQL,
+			args...,
+		).
+		Scan(&page.Total)
+	if err != nil {
+		return page, err
+	}
+
+	orderCol, ok := nodesSortColumns[page.Sort]
+	if !ok {
+		orderCol = "last_seen"
+		page.Sort = "last_seen"
+	}
+
+	dir := strings.ToLower(page.Dir)
+	if dir != "asc" && dir != "desc" {
+		dir = "desc"
+		page.Dir = "desc"
+	}
+
+	if page.Size <= 0 {
+		page.Size = 50
+	}
+
+	if page.Page <= 0 {
+		page.Page = 1
+	}
+
+	offset := (page.Page - 1) * page.Size
+
+	args = append(args, page.Size, offset)
+
+	rows, err := s.Pool.Query(
+		ctx,
+		`
+		SELECT   public_key
+		        ,node_type
+		        ,name
+		        ,has_lat_lon
+		        ,lat_e6
+		        ,lon_e6
+		        ,has_feat1
+		        ,feat1
+		        ,has_feat2
+		        ,feat2
+		        ,advert_timestamp
+		        ,advert_received_at
+		        ,advert_count
+		        ,first_seen
+		        ,last_seen
+		FROM    nodes
+		`+whereSQL+`
+		ORDER BY `+orderCol+` `+dir+`, public_key
+		LIMIT $`+placeholder(len(args)-1)+` OFFSET $`+placeholder(len(args))+`
+		`,
+		args...,
+	)
+	if err != nil {
+		return page, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			n                templates.NodeRow
+			latE6            *int32
+			lonE6            *int32
+			feat1            *int
+			feat2            *int
+			advertTS         *time.Time
+			advertReceivedAt *time.Time
+		)
+
+		err := rows.Scan(
+			&n.PublicKey,
+			&n.NodeType,
+			&n.Name,
+			&n.HasLatLon,
+			&latE6,
+			&lonE6,
+			&n.HasFeat1,
+			&feat1,
+			&n.HasFeat2,
+			&feat2,
+			&advertTS,
+			&advertReceivedAt,
+			&n.AdvertCount,
+			&n.FirstSeen,
+			&n.LastSeen,
+		)
+		if err != nil {
+			return page, err
+		}
+
+		if latE6 != nil {
+			n.LatE6 = *latE6
+		}
+
+		if lonE6 != nil {
+			n.LonE6 = *lonE6
+		}
+
+		if feat1 != nil {
+			n.Feat1 = *feat1
+		}
+
+		if feat2 != nil {
+			n.Feat2 = *feat2
+		}
+
+		if advertTS != nil {
+			n.AdvertTS = *advertTS
+		}
+
+		if advertReceivedAt != nil {
+			n.AdvertReceivedAt = *advertReceivedAt
+		}
+
+		page.Rows = append(page.Rows, n)
+	}
+
+	return page, rows.Err()
+}
+
+func queryNodeDetail(
+	ctx context.Context,
+	s *store.Store,
+	pubkey []byte,
+) (templates.NodeDetail, error) {
+	var (
+		d                templates.NodeDetail
+		latE6            *int32
+		lonE6            *int32
+		feat1            *int
+		feat2            *int
+		advertTS         *time.Time
+		advertReceivedAt *time.Time
+	)
+
+	err := s.Pool.
+		QueryRow(
+			ctx,
+			`
+			SELECT   public_key
+			        ,node_type
+			        ,name
+			        ,has_lat_lon
+			        ,lat_e6
+			        ,lon_e6
+			        ,has_feat1
+			        ,feat1
+			        ,has_feat2
+			        ,feat2
+			        ,advert_timestamp
+			        ,advert_received_at
+			        ,advert_count
+			        ,first_seen
+			        ,last_seen
+			FROM    nodes
+			WHERE   public_key = $1
+			`,
+			pubkey,
+		).
+		Scan(
+			&d.Node.PublicKey,
+			&d.Node.NodeType,
+			&d.Node.Name,
+			&d.Node.HasLatLon,
+			&latE6,
+			&lonE6,
+			&d.Node.HasFeat1,
+			&feat1,
+			&d.Node.HasFeat2,
+			&feat2,
+			&advertTS,
+			&advertReceivedAt,
+			&d.Node.AdvertCount,
+			&d.Node.FirstSeen,
+			&d.Node.LastSeen,
+		)
+	if err != nil {
+		return d, err
+	}
+
+	if latE6 != nil {
+		d.Node.LatE6 = *latE6
+	}
+
+	if lonE6 != nil {
+		d.Node.LonE6 = *lonE6
+	}
+
+	if feat1 != nil {
+		d.Node.Feat1 = *feat1
+	}
+
+	if feat2 != nil {
+		d.Node.Feat2 = *feat2
+	}
+
+	if advertTS != nil {
+		d.Node.AdvertTS = *advertTS
+	}
+
+	if advertReceivedAt != nil {
+		d.Node.AdvertReceivedAt = *advertReceivedAt
+	}
+
+	if len(pubkey) == 0 {
+		return d, nil
+	}
+
+	prefix1 := pubkey[:1]
+
+	rows, err := s.Pool.Query(
+		ctx,
+		`
+		SELECT   p.ts
+		        ,p.observer_id
+		        ,COALESCE(o.origin_name, '')
+		        ,COALESCE(NULLIF(p.packet_type, ''), '')
+		        ,COALESCE(p.route, '')
+		        ,p.rssi
+		        ,p.snr
+		FROM    packet_observations p
+		LEFT JOIN observers o ON o.id = p.observer_id
+		WHERE   p.source_prefix = $1
+		    AND p.ts >= now() - interval '24 hours'
+		ORDER BY p.ts DESC
+		LIMIT 100
+		`,
+		prefix1,
+	)
+	if err != nil {
+		return d, nil
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var p templates.NodePacket
+
+		err := rows.Scan(
+			&p.TS,
+			&p.ObserverID,
+			&p.Observer,
+			&p.PacketType,
+			&p.Route,
+			&p.RSSI,
+			&p.SNR,
+		)
+		if err == nil {
+			d.RecentPackets = append(d.RecentPackets, p)
+		}
+	}
+
+	return d, nil
+}
+
+func placeholder(i int) string {
+	return strconv.Itoa(i)
+}
+
+func itoa(i int) string {
+	return strconv.Itoa(i)
 }
 
 func queryTopology(

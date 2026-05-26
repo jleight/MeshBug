@@ -2,8 +2,12 @@ package templates
 
 import (
 	"fmt"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/a-h/templ"
 )
 
 func sparklinePoints(values []float64, width, height int) string {
@@ -95,6 +99,134 @@ func HexShort(b []byte) string {
 	}
 
 	return string(out)
+}
+
+// nodesPageURL builds a /nodes URL preserving filters but with the
+// page number replaced.
+func nodeDisplayName(n NodeRow) string {
+	if n.Name != "" {
+		return n.Name
+	}
+
+	return HexShort(n.PublicKey) + "…"
+}
+
+func nodeTypeLabel(t string) string {
+	if t == "" {
+		return "NONE"
+	}
+
+	return t
+}
+
+// nodeMapEmbedURL builds an OSM iframe URL centered on the node, with a
+// marker at its lat/lon. The bbox is a fixed ~0.02 degree window so the
+// initial zoom is roughly city-scale.
+func nodeMapEmbedURL(n NodeRow) templ.SafeURL {
+	const halfSpan = 0.01
+
+	lat := float64(n.LatE6) / 1e6
+	lon := float64(n.LonE6) / 1e6
+
+	bbox := fmt.Sprintf(
+		"%.6f,%.6f,%.6f,%.6f",
+		lon-halfSpan,
+		lat-halfSpan,
+		lon+halfSpan,
+		lat+halfSpan,
+	)
+
+	marker := fmt.Sprintf("%.6f,%.6f", lat, lon)
+
+	return templ.SafeURL(
+		"https://www.openstreetmap.org/export/embed.html?bbox=" + bbox + "&layer=mapnik&marker=" + marker,
+	)
+}
+
+func nodesPageURL(d NodesPage, page int) string {
+	return nodesURL(d.Sort, d.Dir, d.Filter, page, d.Size)
+}
+
+// nodesSortURL builds a /nodes URL that asks for sorting by `col`. If
+// `col` is already the current sort, the direction is toggled.
+func nodesSortURL(d NodesPage, col string) string {
+	dir := "asc"
+	if d.Sort == col && d.Dir == "asc" {
+		dir = "desc"
+	}
+
+	return nodesURL(col, dir, d.Filter, 1, d.Size)
+}
+
+func nodesURL(
+	sort string,
+	dir string,
+	filter NodeFilter,
+	page int,
+	size int,
+) string {
+	q := url.Values{}
+
+	if filter.Q != "" {
+		q.Set("q", filter.Q)
+	}
+
+	if filter.Type != "" {
+		q.Set("type", filter.Type)
+	}
+
+	if sort != "" {
+		q.Set("sort", sort)
+	}
+
+	if dir != "" {
+		q.Set("dir", dir)
+	}
+
+	if page > 1 {
+		q.Set("page", strconv.Itoa(page))
+	}
+
+	if size > 0 {
+		q.Set("size", strconv.Itoa(size))
+	}
+
+	enc := q.Encode()
+	if enc == "" {
+		return "/nodes"
+	}
+
+	return "/nodes?" + enc
+}
+
+func nodesRangeStart(d NodesPage) int {
+	if d.Total == 0 {
+		return 0
+	}
+
+	return (d.Page-1)*d.Size + 1
+}
+
+func nodesRangeEnd(d NodesPage) int {
+	end := d.Page * d.Size
+	if end > d.Total {
+		end = d.Total
+	}
+
+	return end
+}
+
+func nodesTotalPages(d NodesPage) int {
+	if d.Size <= 0 || d.Total <= 0 {
+		return 1
+	}
+
+	pages := (d.Total + d.Size - 1) / d.Size
+	if pages < 1 {
+		pages = 1
+	}
+
+	return pages
 }
 
 // HexFull returns the full lowercase hex of a byte slice.

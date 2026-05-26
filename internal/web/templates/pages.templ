@@ -84,6 +84,55 @@ type LivePacket struct {
 	Source     []byte
 }
 
+type NodesPage struct {
+	Rows    []NodeRow
+	Filter  NodeFilter
+	Sort    string
+	Dir     string
+	Page    int
+	Size    int
+	Total   int
+	Types   []string
+}
+
+type NodeFilter struct {
+	Q    string
+	Type string
+}
+
+type NodeDetail struct {
+	Node          NodeRow
+	RecentPackets []NodePacket
+}
+
+type NodePacket struct {
+	TS         time.Time
+	Observer   string
+	ObserverID []byte
+	PacketType string
+	Route      string
+	RSSI       *int
+	SNR        *float64
+}
+
+type NodeRow struct {
+	PublicKey   []byte
+	NodeType    string
+	Name        string
+	HasLatLon   bool
+	LatE6       int32
+	LonE6       int32
+	HasFeat1    bool
+	Feat1       int
+	HasFeat2    bool
+	Feat2       int
+	AdvertTS         time.Time
+	AdvertReceivedAt time.Time
+	AdvertCount      int64
+	FirstSeen   time.Time
+	LastSeen    time.Time
+}
+
 type AnomalyRow struct {
 	ID       int64
 	TS       time.Time
@@ -387,6 +436,304 @@ templ Anomalies(rows []AnomalyRow) {
 				</table>
 			</div>
 		</div>
+	}
+}
+
+templ Nodes(d NodesPage) {
+	@Layout("Nodes", "/nodes") {
+		<div class="card">
+			<div class="card-header">
+				<h3 class="card-title">MeshCore nodes (from adverts)</h3>
+				<div class="card-actions">
+					<span class="text-secondary">{ fmt.Sprintf("%d total", d.Total) }</span>
+				</div>
+			</div>
+			<div class="card-body border-bottom py-3">
+				<form method="get" action="/nodes" class="row g-2 align-items-end">
+					<div class="col-md-5">
+						<label class="form-label">Search</label>
+						<input
+							type="text"
+							class="form-control"
+							name="q"
+							value={ d.Filter.Q }
+							placeholder="name or pubkey hex prefix"
+						/>
+					</div>
+					<div class="col-md-3">
+						<label class="form-label">Type</label>
+						<select class="form-select" name="type">
+							<option value="">(any)</option>
+							for _, t := range d.Types {
+								if t == d.Filter.Type {
+									<option value={ t } selected>{ t }</option>
+								} else {
+									<option value={ t }>{ t }</option>
+								}
+							}
+						</select>
+					</div>
+					<div class="col-md-2">
+						<label class="form-label">Page size</label>
+						<select class="form-select" name="size">
+							for _, sz := range []int{25, 50, 100, 250} {
+								if sz == d.Size {
+									<option value={ fmt.Sprintf("%d", sz) } selected>{ fmt.Sprintf("%d", sz) }</option>
+								} else {
+									<option value={ fmt.Sprintf("%d", sz) }>{ fmt.Sprintf("%d", sz) }</option>
+								}
+							}
+						</select>
+					</div>
+					<div class="col-md-2">
+						<button class="btn btn-primary w-100" type="submit">Apply</button>
+					</div>
+					<input type="hidden" name="sort" value={ d.Sort }/>
+					<input type="hidden" name="dir" value={ d.Dir }/>
+				</form>
+			</div>
+			<div class="table-responsive">
+				<table class="table card-table table-vcenter">
+					<thead>
+						<tr>
+							@nodesSortHeader(d, "name", "Name")
+							@nodesSortHeader(d, "node_type", "Type")
+							<th>Public key</th>
+							@nodesSortHeader(d, "advert_timestamp", "Last advert")
+							@nodesSortHeader(d, "last_seen", "Last seen")
+						</tr>
+					</thead>
+					<tbody>
+						for _, n := range d.Rows {
+							<tr>
+								<td>
+									<a href={ templ.SafeURL("/nodes/" + HexFull(n.PublicKey)) }>
+										if n.Name != "" {
+											{ n.Name }
+										} else {
+											<span class="text-secondary">(unnamed)</span>
+										}
+									</a>
+								</td>
+								<td>@nodeTypePill(n.NodeType)</td>
+								<td class="mb-mono">
+									<a href={ templ.SafeURL("/nodes/" + HexFull(n.PublicKey)) }>
+										{ HexShort(n.PublicKey) }<span class="text-secondary">…</span>
+									</a>
+								</td>
+								<td>
+									if n.AdvertTS.IsZero() {
+										<span class="text-secondary">—</span>
+									} else {
+										@Ago(n.AdvertTS)
+									}
+								</td>
+								<td>@Ago(n.LastSeen)</td>
+							</tr>
+						}
+						if len(d.Rows) == 0 {
+							<tr><td colspan="5" class="text-secondary text-center py-4">No nodes match the current filter.</td></tr>
+						}
+					</tbody>
+				</table>
+			</div>
+			<div class="card-footer d-flex align-items-center">
+				<p class="m-0 text-secondary">
+					{ fmt.Sprintf("Showing %d–%d of %d", nodesRangeStart(d), nodesRangeEnd(d), d.Total) }
+				</p>
+				<ul class="pagination m-0 ms-auto">
+					<li class={ "page-item", templ.KV("disabled", d.Page <= 1) }>
+						<a class="page-link" href={ templ.SafeURL(nodesPageURL(d, d.Page-1)) }>‹ prev</a>
+					</li>
+					<li class="page-item">
+						<span class="page-link">Page { fmt.Sprintf("%d / %d", d.Page, nodesTotalPages(d)) }</span>
+					</li>
+					<li class={ "page-item", templ.KV("disabled", d.Page >= nodesTotalPages(d)) }>
+						<a class="page-link" href={ templ.SafeURL(nodesPageURL(d, d.Page+1)) }>next ›</a>
+					</li>
+				</ul>
+			</div>
+		</div>
+	}
+}
+
+templ NodeDetailPage(d NodeDetail) {
+	@Layout("Node "+nodeDisplayName(d.Node), "/nodes") {
+		<div class="row row-cards">
+			<div class="col-md-5">
+				<div class="card">
+					<div class="card-header">
+						<h3 class="card-title">{ nodeDisplayName(d.Node) }</h3>
+						<div class="card-actions">@nodeTypePill(d.Node.NodeType)</div>
+					</div>
+					<div class="card-body">
+						<dl class="row mb-0">
+							<dt class="col-4">Public key</dt>
+							<dd class="col-8 mb-mono text-break">{ HexFull(d.Node.PublicKey) }</dd>
+
+							<dt class="col-4">Type</dt>
+							<dd class="col-8">{ nodeTypeLabel(d.Node.NodeType) }</dd>
+
+							<dt class="col-4">Name</dt>
+							<dd class="col-8">
+								if d.Node.Name != "" {
+									{ d.Node.Name }
+								} else {
+									<span class="text-secondary">(unnamed)</span>
+								}
+							</dd>
+
+							<dt class="col-4">Location</dt>
+							<dd class="col-8">
+								if d.Node.HasLatLon {
+									{ fmt.Sprintf("%.6f, %.6f", float64(d.Node.LatE6)/1e6, float64(d.Node.LonE6)/1e6) }
+								} else {
+									<span class="text-secondary">—</span>
+								}
+							</dd>
+
+							<dt class="col-4">Feature 1</dt>
+							<dd class="col-8 mb-mono">
+								if d.Node.HasFeat1 {
+									0x{ fmt.Sprintf("%04x", d.Node.Feat1) } <span class="text-secondary">({ fmt.Sprintf("%d", d.Node.Feat1) })</span>
+								} else {
+									<span class="text-secondary">—</span>
+								}
+							</dd>
+
+							<dt class="col-4">Feature 2</dt>
+							<dd class="col-8 mb-mono">
+								if d.Node.HasFeat2 {
+									0x{ fmt.Sprintf("%04x", d.Node.Feat2) } <span class="text-secondary">({ fmt.Sprintf("%d", d.Node.Feat2) })</span>
+								} else {
+									<span class="text-secondary">—</span>
+								}
+							</dd>
+
+							<dt class="col-4">Adverts seen</dt>
+							<dd class="col-8">{ fmt.Sprintf("%d", d.Node.AdvertCount) }</dd>
+
+							<dt class="col-4">Last advert (wire)</dt>
+							<dd class="col-8">
+								if d.Node.AdvertTS.IsZero() {
+									<span class="text-secondary">—</span>
+								} else {
+									<span title={ d.Node.AdvertTS.UTC().Format(time.RFC3339) }>
+										{ d.Node.AdvertTS.UTC().Format(time.RFC3339) }
+									</span>
+								}
+							</dd>
+
+							<dt class="col-4">Last advert (observed)</dt>
+							<dd class="col-8">
+								if d.Node.AdvertReceivedAt.IsZero() {
+									<span class="text-secondary">—</span>
+								} else {
+									<span title={ d.Node.AdvertReceivedAt.UTC().Format(time.RFC3339) }>
+										{ d.Node.AdvertReceivedAt.UTC().Format(time.RFC3339) }
+									</span>
+								}
+							</dd>
+
+							<dt class="col-4">First seen</dt>
+							<dd class="col-8">
+								<span title={ d.Node.FirstSeen.UTC().Format(time.RFC3339) }>@Ago(d.Node.FirstSeen)</span>
+							</dd>
+
+							<dt class="col-4">Last seen</dt>
+							<dd class="col-8">
+								<span title={ d.Node.LastSeen.UTC().Format(time.RFC3339) }>@Ago(d.Node.LastSeen)</span>
+							</dd>
+						</dl>
+					</div>
+				</div>
+				if d.Node.HasLatLon {
+					<div class="card mt-3">
+						<div class="card-header"><h3 class="card-title">Map</h3></div>
+						<div class="ratio ratio-16x9">
+							<iframe
+								title="OpenStreetMap"
+								class="border-0"
+								loading="lazy"
+								src={ nodeMapEmbedURL(d.Node) }
+							></iframe>
+						</div>
+					</div>
+				}
+			</div>
+
+			<div class="col-md-7">
+				<div class="card">
+					<div class="card-header">
+						<h3 class="card-title">Recent packets from this node</h3>
+						<div class="card-actions text-secondary">matched by 1-byte prefix</div>
+					</div>
+					<div class="table-responsive">
+						<table class="table card-table table-vcenter">
+							<thead><tr><th>Time</th><th>Observer</th><th>Type</th><th>Route</th><th>RSSI</th><th>SNR</th></tr></thead>
+							<tbody>
+								for _, p := range d.RecentPackets {
+									<tr>
+										<td class="mb-mono">{ p.TS.Format("15:04:05") }</td>
+										<td class="mb-mono">
+											<a href={ templ.SafeURL("/observers/" + HexFull(p.ObserverID)) }>{ shortName(p.Observer) }</a>
+										</td>
+										<td>{ p.PacketType }</td>
+										<td>{ p.Route }</td>
+										<td>@rssiOrDash(p.RSSI)</td>
+										<td>@snrOrDash(p.SNR)</td>
+									</tr>
+								}
+								if len(d.RecentPackets) == 0 {
+									<tr><td colspan="6" class="text-secondary text-center py-4">No matching packets in the last 24 hours.</td></tr>
+								}
+							</tbody>
+						</table>
+					</div>
+				</div>
+			</div>
+		</div>
+	}
+}
+
+templ nodesSortHeader(d NodesPage, col, label string) {
+	<th>
+		<a href={ templ.SafeURL(nodesSortURL(d, col)) } class="text-reset text-decoration-none">
+			{ label }
+			if d.Sort == col {
+				if d.Dir == "asc" {
+					<i class="ti ti-arrow-up"></i>
+				} else {
+					<i class="ti ti-arrow-down"></i>
+				}
+			}
+		</a>
+	</th>
+}
+
+templ nodeTypePill(t string) {
+	switch t {
+	case "REPEATER":
+		<span class="badge bg-blue">REPEATER</span>
+	case "CHAT":
+		<span class="badge bg-green">CHAT</span>
+	case "ROOM":
+		<span class="badge bg-purple">ROOM</span>
+	case "SENSOR":
+		<span class="badge bg-orange">SENSOR</span>
+	case "NONE", "":
+		<span class="badge bg-secondary">NONE</span>
+	default:
+		<span class="badge bg-secondary">{ t }</span>
+	}
+}
+
+templ nodeFeatures(n NodeRow) {
+	if n.HasFeat1 {
+		<span class="me-2">f1=0x{ fmt.Sprintf("%04x", n.Feat1) }</span>
+	}
+	if n.HasFeat2 {
+		<span>f2=0x{ fmt.Sprintf("%04x", n.Feat2) }</span>
 	}
 }
 
