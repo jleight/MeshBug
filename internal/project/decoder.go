@@ -93,16 +93,16 @@ func (d *decoder) decodeStatus(raw store.RawEvent) (*pipeline.StatusPayload, boo
 		RadioBWKHz:      bw,
 		RadioSF:         sf,
 		RadioCR:         cr,
-		UptimeSecs:      m.Stats.UptimeSecs,
-		BatteryMV:       m.Stats.BatteryMV,
-		QueueLen:        m.Stats.QueueLen,
-		NoiseFloor:      m.Stats.NoiseFloor,
-		TxAirSecs:       m.Stats.TxAirSecs,
-		RxAirSecs:       m.Stats.RxAirSecs,
+		UptimeSecs:      m.Stats.UptimeSecs.Int64Ptr(),
+		BatteryMV:       m.Stats.BatteryMV.IntPtr(),
+		QueueLen:        m.Stats.QueueLen.IntPtr(),
+		NoiseFloor:      m.Stats.NoiseFloor.IntPtr(),
+		TxAirSecs:       m.Stats.TxAirSecs.Int64Ptr(),
+		RxAirSecs:       m.Stats.RxAirSecs.Int64Ptr(),
 		RecvErrors:      pickErrors(m.Stats.RecvErrors, m.Stats.Errors),
-		LastRSSI:        m.Stats.LastRSSI,
+		LastRSSI:        m.Stats.LastRSSI.IntPtr(),
 		LastSNR:         m.Stats.LastSNR,
-		DebugFlags:      m.Stats.DebugFlags,
+		DebugFlags:      m.Stats.DebugFlags.Int64Ptr(),
 	}, true
 }
 
@@ -185,9 +185,9 @@ func (d *decoder) decodePacket(raw store.RawEvent) (*pipeline.PacketPayload, boo
 	return p, true
 }
 
-func pickErrors(a, b *int64) *int64 {
+func pickErrors(a, b *flexInt64) *int64 {
 	if a != nil {
-		return a
+		return a.Int64Ptr()
 	}
-	return b
+	return b.Int64Ptr()
 }

@@ -62,6 +62,37 @@ func TestUnmarshalStatus(t *testing.T) {
 	}
 }
 
+func TestUnmarshalStatusFloatStats(t *testing.T) {
+	// Some observers publish stat counters as JSON floats (e.g. 0.0) even
+	// when the value is whole. They must still decode cleanly.
+	raw := []byte(`{"status":"online","stats":{"tx_air_secs":0.0,"rx_air_secs":12.5,"queue_len":3.0,"noise_floor":-84.0,"recv_errors":7.9}}`)
+
+	m, err := unmarshalStatus(raw)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	if v := m.Stats.TxAirSecs.Int64Ptr(); v == nil || *v != 0 {
+		t.Errorf("tx_air_secs = %v", v)
+	}
+
+	if v := m.Stats.RxAirSecs.Int64Ptr(); v == nil || *v != 12 {
+		t.Errorf("rx_air_secs = %v", v)
+	}
+
+	if v := m.Stats.QueueLen.IntPtr(); v == nil || *v != 3 {
+		t.Errorf("queue_len = %v", v)
+	}
+
+	if v := m.Stats.NoiseFloor.IntPtr(); v == nil || *v != -84 {
+		t.Errorf("noise_floor = %v", v)
+	}
+
+	if v := m.Stats.RecvErrors.Int64Ptr(); v == nil || *v != 7 {
+		t.Errorf("recv_errors = %v", v)
+	}
+}
+
 func TestUnmarshalPacket(t *testing.T) {
 	raw := []byte(`{"timestamp": "2026-05-22T11:38:03.342542", "origin": "mrPeteza HA", "origin_id": "F0...", "type": "PACKET", "direction": "rx", "time": "11:38:03", "date": "22/5/2026", "len": "0", "packet_type": "", "route": "F", "payload_len": "0", "raw": "", "SNR": "", "RSSI": "", "score": "1000", "duration": "0", "hash": ""}`)
 

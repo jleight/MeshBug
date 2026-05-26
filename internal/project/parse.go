@@ -21,17 +21,17 @@ type statusMessage struct {
 	FirmwareVersion string `json:"firmware_version"`
 
 	Stats struct {
-		UptimeSecs *int64   `json:"uptime_secs,omitempty"`
-		BatteryMV  *int     `json:"battery_mv,omitempty"`
-		DebugFlags *int64   `json:"debug_flags,omitempty"`
-		QueueLen   *int     `json:"queue_len,omitempty"`
-		NoiseFloor *int     `json:"noise_floor,omitempty"`
-		TxAirSecs  *int64   `json:"tx_air_secs,omitempty"`
-		RxAirSecs  *int64   `json:"rx_air_secs,omitempty"`
-		RecvErrors *int64   `json:"recv_errors,omitempty"`
-		LastRSSI   *int     `json:"last_rssi,omitempty"`
-		LastSNR    *float64 `json:"last_snr,omitempty"`
-		Errors     *int64   `json:"errors,omitempty"`
+		UptimeSecs *flexInt64 `json:"uptime_secs,omitempty"`
+		BatteryMV  *flexInt   `json:"battery_mv,omitempty"`
+		DebugFlags *flexInt64 `json:"debug_flags,omitempty"`
+		QueueLen   *flexInt   `json:"queue_len,omitempty"`
+		NoiseFloor *flexInt   `json:"noise_floor,omitempty"`
+		TxAirSecs  *flexInt64 `json:"tx_air_secs,omitempty"`
+		RxAirSecs  *flexInt64 `json:"rx_air_secs,omitempty"`
+		RecvErrors *flexInt64 `json:"recv_errors,omitempty"`
+		LastRSSI   *flexInt   `json:"last_rssi,omitempty"`
+		LastSNR    *float64   `json:"last_snr,omitempty"`
+		Errors     *flexInt64 `json:"errors,omitempty"`
 	} `json:"stats"`
 }
 
@@ -87,6 +87,72 @@ func (f *flexStr) UnmarshalJSON(b []byte) error {
 
 func (f flexStr) String() string {
 	return string(f)
+}
+
+// flexInt64 accepts a JSON integer OR a JSON float (e.g. 0.0). Floats are
+// truncated toward zero. Some observers publish counters like tx_air_secs as
+// floats even when the value is whole.
+type flexInt64 int64
+
+func (f *flexInt64) UnmarshalJSON(b []byte) error {
+	s := strings.TrimSpace(string(b))
+	if s == "" || s == "null" {
+		return nil
+	}
+
+	if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+		*f = flexInt64(i)
+		return nil
+	}
+
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return fmt.Errorf("flexInt64: %w", err)
+	}
+
+	*f = flexInt64(int64(v))
+	return nil
+}
+
+// flexInt is the int-sized counterpart to flexInt64.
+type flexInt int
+
+func (f *flexInt) UnmarshalJSON(b []byte) error {
+	s := strings.TrimSpace(string(b))
+	if s == "" || s == "null" {
+		return nil
+	}
+
+	if i, err := strconv.ParseInt(s, 10, 0); err == nil {
+		*f = flexInt(i)
+		return nil
+	}
+
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return fmt.Errorf("flexInt: %w", err)
+	}
+
+	*f = flexInt(int(v))
+	return nil
+}
+
+func (f *flexInt64) Int64Ptr() *int64 {
+	if f == nil {
+		return nil
+	}
+
+	v := int64(*f)
+	return &v
+}
+
+func (f *flexInt) IntPtr() *int {
+	if f == nil {
+		return nil
+	}
+
+	v := int(*f)
+	return &v
 }
 
 // parseTopicHash returns the observer hash (32 bytes) and the region label
